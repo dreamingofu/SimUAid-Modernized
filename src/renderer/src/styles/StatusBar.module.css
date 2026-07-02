@@ -1,0 +1,24 @@
+.statusbar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.message {
+  color: var(--text);
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.field {
+  white-space: nowrap;
+}

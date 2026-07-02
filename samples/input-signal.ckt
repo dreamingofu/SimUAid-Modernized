@@ -1,0 +1,88 @@
+{
+  "format": "simuaid-ckt",
+  "version": 1,
+  "netlist": {
+    "components": [
+      {
+        "id": "inp",
+        "type": "INPUT_SIGNAL",
+        "x": 120,
+        "y": 140,
+        "rotation": 0,
+        "label": "IN",
+        "pinLabels": {
+          "out": "IN"
+        },
+        "delay": 1,
+        "signal": [
+          {
+            "timeNs": 0,
+            "value": "0"
+          },
+          {
+            "timeNs": 10,
+            "value": "1"
+          },
+          {
+            "timeNs": 20,
+            "value": "0"
+          },
+          {
+            "timeNs": 30,
+            "value": "1"
+          },
+          {
+            "timeNs": 40,
+            "value": "R"
+          }
+        ]
+      },
+      {
+        "id": "p",
+        "type": "PROBE",
+        "x": 320,
+        "y": 150,
+        "rotation": 0,
+        "label": "SIG",
+        "pinLabels": {},
+        "delay": 1
+      }
+    ],
+    "wires": [
+      {
+        "id": "inp-out__p-in",
+        "segments": [
+          {
+            "x1": 160,
+            "y1": 160,
+            "x2": 320,
+            "y2": 160
+          },
+          {
+            "x1": 320,
+            "y1": 160,
+            "x2": 320,
+            "y2": 170
+          }
+        ],
+        "fromPinId": "inp#out",
+        "toPinId": "p#in",
+        "netId": ""
+      }
+    ],
+    "metadata": {
+      "name": "input-signal",
+      "createdAt": "2026-06-29T05:45:04.005Z",
+      "modifiedAt": "2026-06-29T05:45:04.005Z",
+      "appVersion": "0.1.0",
+      "comment": "",
+      "defaultDelay": 1,
+      "simulation": {
+        "simTimeNs": 100,
+        "clockPeriodNs": 20,
+        "clockInitialValue": "1"
+      },
+      "scalingFactor": 1
+    }
+  }
+}

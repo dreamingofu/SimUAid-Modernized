@@ -1,0 +1,178 @@
+{
+  "format": "simuaid-ckt",
+  "version": 1,
+  "netlist": {
+    "components": [
+      {
+        "id": "clk",
+        "type": "CLOCK",
+        "x": 120,
+        "y": 240,
+        "rotation": 0,
+        "label": "CLK",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "swS",
+        "type": "SWITCH",
+        "x": 120,
+        "y": 80,
+        "rotation": 0,
+        "label": "S",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "swR",
+        "type": "SWITCH",
+        "x": 120,
+        "y": 360,
+        "rotation": 0,
+        "label": "R",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "ff",
+        "type": "D_FLIPFLOP",
+        "x": 320,
+        "y": 160,
+        "rotation": 0,
+        "label": "FF",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "pq",
+        "type": "PROBE",
+        "x": 520,
+        "y": 170,
+        "rotation": 0,
+        "label": "Q",
+        "pinLabels": {},
+        "delay": 1
+      }
+    ],
+    "wires": [
+      {
+        "id": "clk-out__ff-CLK",
+        "segments": [
+          {
+            "x1": 160,
+            "y1": 260,
+            "x2": 320,
+            "y2": 260
+          },
+          {
+            "x1": 320,
+            "y1": 260,
+            "x2": 320,
+            "y2": 220
+          }
+        ],
+        "fromPinId": "clk#out",
+        "toPinId": "ff#CLK",
+        "netId": ""
+      },
+      {
+        "id": "swS-out__ff-S",
+        "segments": [
+          {
+            "x1": 160,
+            "y1": 100,
+            "x2": 350,
+            "y2": 100
+          },
+          {
+            "x1": 350,
+            "y1": 100,
+            "x2": 350,
+            "y2": 160
+          }
+        ],
+        "fromPinId": "swS#out",
+        "toPinId": "ff#S",
+        "netId": ""
+      },
+      {
+        "id": "swR-out__ff-R",
+        "segments": [
+          {
+            "x1": 160,
+            "y1": 380,
+            "x2": 350,
+            "y2": 380
+          },
+          {
+            "x1": 350,
+            "y1": 380,
+            "x2": 350,
+            "y2": 240
+          }
+        ],
+        "fromPinId": "swR#out",
+        "toPinId": "ff#R",
+        "netId": ""
+      },
+      {
+        "id": "ff-Q'__ff-D",
+        "segments": [
+          {
+            "x1": 380,
+            "y1": 220,
+            "x2": 320,
+            "y2": 220
+          },
+          {
+            "x1": 320,
+            "y1": 220,
+            "x2": 320,
+            "y2": 180
+          }
+        ],
+        "fromPinId": "ff#Q'",
+        "toPinId": "ff#D",
+        "netId": ""
+      },
+      {
+        "id": "ff-Q__pq-in",
+        "segments": [
+          {
+            "x1": 380,
+            "y1": 180,
+            "x2": 520,
+            "y2": 180
+          },
+          {
+            "x1": 520,
+            "y1": 180,
+            "x2": 520,
+            "y2": 190
+          }
+        ],
+        "fromPinId": "ff#Q",
+        "toPinId": "pq#in",
+        "netId": ""
+      }
+    ],
+    "metadata": {
+      "name": "clock-divider",
+      "createdAt": "2026-06-29T05:45:04.002Z",
+      "modifiedAt": "2026-06-29T05:45:04.002Z",
+      "appVersion": "0.1.0",
+      "comment": "",
+      "defaultDelay": 1,
+      "simulation": {
+        "simTimeNs": 100,
+        "clockPeriodNs": 20,
+        "clockInitialValue": "1"
+      },
+      "scalingFactor": 1,
+      "switchValues": {
+        "swS": "1",
+        "swR": "1"
+      }
+    }
+  }
+}

@@ -1,0 +1,46 @@
+.toolbar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border);
+}
+
+.button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.separator {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  margin: 4px 6px;
+}
