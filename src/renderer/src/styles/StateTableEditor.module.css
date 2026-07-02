@@ -1,0 +1,118 @@
+.panel {
+  position: fixed;
+  z-index: 90;
+  min-width: 420px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
+  user-select: none;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  cursor: move;
+  touch-action: none;
+}
+
+.minBtn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.minBtn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar button {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.toolbar button:hover {
+  background: var(--hover);
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.table th {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.table td {
+  padding: 1px;
+}
+
+.table input {
+  width: 100%;
+  min-width: 80px;
+  box-sizing: border-box;
+  font: 12px 'Consolas', monospace;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  outline: none;
+}
+
+.table input:focus {
+  border-color: var(--accent);
+  background: #fff;
+}
+
+.activeRow {
+  background: #dbe8fb;
+}
+
+.idleRow {
+  background: #e4f3e4;
+}
+
+tr[data-selected] td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.errCell {
+  border-color: #d12b2b !important;
+  background: #fdecec !important;
+}
+
+.errText {
+  color: #d12b2b;
+}
+
+.legend {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}

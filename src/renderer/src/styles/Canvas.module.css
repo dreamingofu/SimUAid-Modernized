@@ -1,0 +1,14 @@
+.canvasWrap {
+  flex: 1 1 auto;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+}

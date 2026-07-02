@@ -1,0 +1,100 @@
+.menubar {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  z-index: 20;
+}
+
+.menu {
+  position: relative;
+}
+
+.top {
+  border: none;
+  background: transparent;
+  padding: 6px 12px;
+  cursor: pointer;
+  height: 100%;
+}
+
+.top:hover,
+.topOpen {
+  background: var(--hover);
+}
+
+.dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  padding: 4px 0;
+  z-index: 30;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: var(--accent-soft);
+}
+
+.itemLabel {
+  white-space: nowrap;
+}
+
+.accel {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.separator {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.submenuParent {
+  position: relative;
+}
+
+.submenuLabel {
+  cursor: default;
+}
+
+.subDropdown {
+  display: none;
+  position: absolute;
+  top: -5px;
+  left: 100%;
+  min-width: 220px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  padding: 4px 0;
+  z-index: 40;
+}
+
+.submenuParent:hover > .subDropdown {
+  display: block;
+}
+
+.submenuParent:hover > .submenuLabel {
+  background: var(--accent-soft);
+}

@@ -1,0 +1,14 @@
+.editor {
+  position: fixed;
+  transform: translate(-50%, -100%);
+  z-index: 1000;
+  font: 13px 'Segoe UI', system-ui, sans-serif;
+  min-width: 60px;
+  width: 90px;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: #fff;
+  text-align: center;
+  outline: none;
+}

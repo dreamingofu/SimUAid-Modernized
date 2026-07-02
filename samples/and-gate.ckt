@@ -1,0 +1,122 @@
+{
+  "format": "simuaid-ckt",
+  "version": 1,
+  "netlist": {
+    "components": [
+      {
+        "id": "swA",
+        "type": "SWITCH",
+        "x": 120,
+        "y": 120,
+        "rotation": 0,
+        "label": "A",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "swB",
+        "type": "SWITCH",
+        "x": 120,
+        "y": 200,
+        "rotation": 0,
+        "label": "B",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "g",
+        "type": "AND2",
+        "x": 300,
+        "y": 140,
+        "rotation": 0,
+        "label": "G",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "p",
+        "type": "PROBE",
+        "x": 460,
+        "y": 150,
+        "rotation": 0,
+        "label": "Y",
+        "pinLabels": {},
+        "delay": 1
+      }
+    ],
+    "wires": [
+      {
+        "id": "swA-out__g-in1",
+        "segments": [
+          {
+            "x1": 160,
+            "y1": 140,
+            "x2": 300,
+            "y2": 140
+          },
+          {
+            "x1": 300,
+            "y1": 140,
+            "x2": 300,
+            "y2": 160
+          }
+        ],
+        "fromPinId": "swA#out",
+        "toPinId": "g#in1",
+        "netId": ""
+      },
+      {
+        "id": "swB-out__g-in2",
+        "segments": [
+          {
+            "x1": 160,
+            "y1": 220,
+            "x2": 300,
+            "y2": 220
+          },
+          {
+            "x1": 300,
+            "y1": 220,
+            "x2": 300,
+            "y2": 180
+          }
+        ],
+        "fromPinId": "swB#out",
+        "toPinId": "g#in2",
+        "netId": ""
+      },
+      {
+        "id": "g-out__p-in",
+        "segments": [
+          {
+            "x1": 360,
+            "y1": 170,
+            "x2": 460,
+            "y2": 170
+          }
+        ],
+        "fromPinId": "g#out",
+        "toPinId": "p#in",
+        "netId": ""
+      }
+    ],
+    "metadata": {
+      "name": "and-gate",
+      "createdAt": "2026-06-29T05:45:03.993Z",
+      "modifiedAt": "2026-06-29T05:45:03.993Z",
+      "appVersion": "0.1.0",
+      "comment": "",
+      "defaultDelay": 1,
+      "simulation": {
+        "simTimeNs": 100,
+        "clockPeriodNs": 20,
+        "clockInitialValue": "1"
+      },
+      "scalingFactor": 1,
+      "switchValues": {
+        "swA": "1",
+        "swB": "1"
+      }
+    }
+  }
+}
