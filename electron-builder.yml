@@ -1,0 +1,43 @@
+appId: com.simuaid.app
+productName: SimUaid
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+asarUnpack:
+  - resources/**
+# Only publish when explicitly requested with `--publish always` (done by
+# the CI release workflow). Local builds never touch GitHub.
+publish: never
+
+mac:
+  target:
+    - target: dmg
+      arch: [universal]
+  category: public.app-category.education
+  # No Apple Developer ID yet. Once you have one:
+  #   1. Delete the `identity: null` line below (electron-builder will then
+  #      auto-detect your "Developer ID Application" cert from the keychain,
+  #      or from CSC_LINK/CSC_KEY_PASSWORD env vars in CI).
+  #   2. Uncomment hardenedRuntime + entitlements below.
+  #   3. Set APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID as repo
+  #      secrets (used in .github/workflows/release.yml) — electron-builder
+  #      notarizes automatically when these are present alongside a real
+  #      signing identity.
+  identity: null
+  # hardenedRuntime: true
+  # entitlements: build/entitlements.mac.plist
+  # entitlementsInherit: build/entitlements.mac.plist
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
