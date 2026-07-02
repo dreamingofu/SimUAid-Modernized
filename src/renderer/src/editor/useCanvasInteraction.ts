@@ -4,7 +4,7 @@
 
 import { useEffect, type RefObject } from 'react'
 import { ComponentType } from '../model/types'
-import { busWidthOfWire, useCircuitStore } from '../store/circuitStore'
+import { useCircuitStore } from '../store/circuitStore'
 import { getPartDefinition } from '../model/partDefinitions'
 import {
   GRID,
@@ -13,7 +13,7 @@ import {
   type Point,
   type Viewport
 } from '../geometry/coords'
-import { findPinAt } from '../geometry/pins'
+import { busWidthOfWire, findPinAt } from '../geometry/pins'
 import { hitComponent, hitDeviceLabel, hitWire } from '../geometry/hitTest'
 import { beep } from './beep'
 

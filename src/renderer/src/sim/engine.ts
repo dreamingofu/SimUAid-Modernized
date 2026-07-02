@@ -10,6 +10,10 @@ import {
 import { buildSimGraph, type SimComponent, type SimGraph, type SimNet } from './graph'
 import { evalGate, gateFamily, nextFlipFlopQ, type FlipFlopKind } from './logic'
 import { compileTable, termsMatch, type CompiledSmRow } from './stateMachine'
+import { EventHeap, type SimEvent } from './eventHeap'
+import { clean, hexToVec, numToVec, vecEqual, vecToHex, vecToNum, xVec, zVec } from './values'
+
+export { vecToHex, hexToVec } from './values'
 
 const { ZERO, ONE, X, Z } = LogicValue
 
@@ -26,71 +30,6 @@ export interface WaveformTrace {
   probeId: string
   bus: boolean
   samples: WaveformSample[]
-}
-
-type SimEvent =
-  | { time: number; seq: number; kind: 'drive'; pinId: PinId; value: LogicValue }
-  | { time: number; seq: number; kind: 'busdrive'; pinId: PinId; value: LogicValue[] }
-  | { time: number; seq: number; kind: 'eval'; componentId: string }
-  | { time: number; seq: number; kind: 'softreset' }
-  | { time: number; seq: number; kind: 'sample'; slot: number }
-
-class EventHeap {
-  private items: SimEvent[] = []
-
-  get size(): number {
-    return this.items.length
-  }
-
-  peek(): SimEvent | undefined {
-    return this.items[0]
-  }
-
-  values(): readonly SimEvent[] {
-    return this.items
-  }
-
-  clear(): void {
-    this.items = []
-  }
-
-  push(e: SimEvent): void {
-    const items = this.items
-    items.push(e)
-    let i = items.length - 1
-    while (i > 0) {
-      const parent = (i - 1) >> 1
-      if (this.before(items[i], items[parent])) {
-        ;[items[i], items[parent]] = [items[parent], items[i]]
-        i = parent
-      } else break
-    }
-  }
-
-  pop(): SimEvent | undefined {
-    const items = this.items
-    const top = items[0]
-    const last = items.pop()
-    if (last !== undefined && items.length > 0) {
-      items[0] = last
-      let i = 0
-      for (;;) {
-        const l = 2 * i + 1
-        const r = l + 1
-        let smallest = i
-        if (l < items.length && this.before(items[l], items[smallest])) smallest = l
-        if (r < items.length && this.before(items[r], items[smallest])) smallest = r
-        if (smallest === i) break
-        ;[items[i], items[smallest]] = [items[smallest], items[i]]
-        i = smallest
-      }
-    }
-    return top
-  }
-
-  private before(a: SimEvent, b: SimEvent): boolean {
-    return a.time !== b.time ? a.time < b.time : a.seq < b.seq
-  }
 }
 
 interface InputSource {
@@ -119,64 +58,6 @@ function complement(v: LogicValue): LogicValue {
   if (v === ZERO) return ONE
   if (v === ONE) return ZERO
   return X
-}
-
-const clean = (v: LogicValue): boolean => v === ZERO || v === ONE
-
-function vecToNum(vec: LogicValue[]): number | null {
-  let n = 0
-  for (let i = vec.length - 1; i >= 0; i--) {
-    if (!clean(vec[i])) return null
-    n = n * 2 + (vec[i] === ONE ? 1 : 0)
-  }
-  return n
-}
-
-function numToVec(n: number, bits: number): LogicValue[] {
-  const vec: LogicValue[] = []
-  for (let i = 0; i < bits; i++) vec.push((n >> i) & 1 ? ONE : ZERO)
-  return vec
-}
-
-const xVec = (bits: number): LogicValue[] => new Array<LogicValue>(bits).fill(X)
-const zVec = (bits: number): LogicValue[] => new Array<LogicValue>(bits).fill(Z)
-
-function vecEqual(a: LogicValue[] | undefined, b: LogicValue[]): boolean {
-  if (!a || a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
-}
-
-/** LSB-first vector -> uppercase hex; 'X'/'Z' fills when bits are not clean. */
-export function vecToHex(vec: LogicValue[]): string {
-  const digits = Math.ceil(vec.length / 4)
-  if (vec.every((v) => v === Z)) return 'Z'.repeat(digits)
-  if (!vec.every(clean)) return 'X'.repeat(digits)
-  let out = ''
-  for (let d = 0; d < digits; d++) {
-    let nibble = 0
-    for (let b = 3; b >= 0; b--) {
-      const i = d * 4 + b
-      nibble = nibble * 2 + (i < vec.length && vec[i] === ONE ? 1 : 0)
-    }
-    out = nibble.toString(16).toUpperCase() + out
-  }
-  return out
-}
-
-/** Hex string (no prefix) -> LSB-first vector, or null when not valid hex. */
-export function hexToVec(hex: string, bits: number): LogicValue[] | null {
-  const s = hex.trim()
-  if (!/^[0-9a-fA-F]+$/.test(s)) return null
-  const vec = zVec(bits).fill(ZERO)
-  for (let d = 0; d < s.length; d++) {
-    const nibble = parseInt(s[s.length - 1 - d], 16)
-    for (let b = 0; b < 4; b++) {
-      const i = d * 4 + b
-      if (i < bits) vec[i] = (nibble >> b) & 1 ? ONE : ZERO
-    }
-  }
-  return vec
 }
 
 function checkerDrive(ch: string | undefined): LogicValue {

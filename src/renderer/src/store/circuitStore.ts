@@ -1,14 +1,13 @@
-// Zustand store: the single source of truth for the editor's runtime state.
-// Phase 2 adds the viewport, a structured selection, transient interaction state
-// (wire draft + inline label edit), and the actions the canvas/commands drive.
-// Still no simulation — pin values render as Z.
+// Zustand store: the single source of truth for editor runtime state — the
+// netlist document, viewport, selection, transient interaction (wire drafts,
+// inline edits), dialogs, and the published simulation snapshot. The simulator
+// itself lives outside the store (see the engine cache below).
 
 import { create } from 'zustand'
 import {
   ComponentType,
   LogicValue,
   SimMode,
-  parsePinId,
   type Component,
   type Netlist,
   type PinId,
@@ -16,6 +15,16 @@ import {
   type SmRow,
   type Wire
 } from '../model/types'
+import { busWidthOfWire } from '../geometry/pins'
+import {
+  confirmDiscardIfDirty,
+  hasTimedSource,
+  netlistForSave,
+  recallSmTable,
+  rememberSmTables,
+  stampNetIds,
+  touch
+} from './netlistOps'
 import { defOf, getPartDefinition } from '../model/partDefinitions'
 import { Simulator, type WaveformTrace } from '../sim/engine'
 import {
@@ -221,46 +230,7 @@ interface CircuitState {
   saveAs: () => Promise<boolean>
 }
 
-/** Stamps metadata.modifiedAt. */
-function touch(netlist: Netlist): Netlist {
-  return {
-    ...netlist,
-    metadata: { ...netlist.metadata, modifiedAt: new Date().toISOString() }
-  }
-}
-
-/** Recomputes and stamps each wire's netId from the resolved nets. */
-function stampNetIds(netlist: Netlist): Netlist {
-  const nets = resolveNets(netlist)
-  const wires = netlist.wires.map((w) => {
-    const net = findNetContaining(nets, { wireId: w.id })
-    return net && net.id !== w.netId ? { ...w, netId: net.id } : w
-  })
-  return { ...netlist, wires }
-}
-
 const uid = (): string => crypto.randomUUID()
-
-function pinWidth(netlist: Netlist, pinId: string | null): number {
-  if (!pinId) return 1
-  const { componentId, pinName } = parsePinId(pinId)
-  const comp = netlist.components.find((c) => c.id === componentId)
-  if (!comp) return 1
-  return defOf(comp).pins.find((p) => p.name === pinName)?.width ?? 1
-}
-
-export function busWidthOfWire(netlist: Netlist, wire: Wire): number {
-  return Math.max(pinWidth(netlist, wire.fromPinId), pinWidth(netlist, wire.toPinId))
-}
-
-function hasTimedSource(netlist: Netlist): boolean {
-  return netlist.components.some(
-    (c) =>
-      c.type === ComponentType.CLOCK ||
-      c.type === ComponentType.INPUT_SIGNAL ||
-      c.type === ComponentType.CHECKER
-  )
-}
 
 // The simulator holds heavy mutable state (event queue, net/FF maps) so it lives
 // outside the store. It is cached against the netlist's object identity: a
@@ -295,17 +265,6 @@ function publishSim(get: () => CircuitState, set: (partial: Partial<CircuitState
   })
 }
 
-// A deleted state machine's table survives in memory so the next placement can
-// restore it (the manual's workflow for adjusting pin counts without retyping).
-let rememberedSmTable: SmRow[] | null = null
-
-function rememberSmTables(netlist: Netlist, removedIds: ReadonlySet<string>): void {
-  for (const c of netlist.components) {
-    if (c.type === ComponentType.STATE_MACHINE && removedIds.has(c.id) && c.smTable?.length) {
-      rememberedSmTable = c.smTable
-    }
-  }
-}
 
 export const useCircuitStore = create<CircuitState>((set, get) => ({
   netlist: createEmptyNetlist(),
@@ -403,7 +362,7 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
       return
     }
     if (type === ComponentType.STATE_MACHINE) {
-      extra = { smTable: rememberedSmTable ?? [], ...extra }
+      extra = { smTable: recallSmTable() ?? [], ...extra }
     }
     const def =
       type === ComponentType.STATE_MACHINE
@@ -966,43 +925,22 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
   },
 
   save: async () => {
-    const { currentFilePath } = get()
+    const { currentFilePath, netlist, switchValues } = get()
     if (!currentFilePath) return get().saveAs()
-    await window.api.saveCkt(currentFilePath, serializeNetlist(netlistForSave(get())))
+    await window.api.saveCkt(currentFilePath, serializeNetlist(netlistForSave(netlist, switchValues)))
     set({ dirty: false, statusMessage: `Saved ${currentFilePath}` })
     return true
   },
 
   saveAs: async () => {
-    const { netlist } = get()
+    const { netlist, switchValues } = get()
     const defaultName = `${netlist.metadata.name || 'Untitled'}.ckt`
-    const path = await window.api.saveCktAs(serializeNetlist(netlistForSave(get())), defaultName)
+    const path = await window.api.saveCktAs(
+      serializeNetlist(netlistForSave(netlist, switchValues)),
+      defaultName
+    )
     if (!path) return false
     set({ currentFilePath: path, dirty: false, statusMessage: `Saved ${path}` })
     return true
   }
 }))
-
-/** Folds runtime switch positions into the netlist for persistence. */
-function netlistForSave(s: CircuitState): Netlist {
-  return { ...s.netlist, metadata: { ...s.netlist.metadata, switchValues: s.switchValues } }
-}
-
-/**
- * Native 3-way prompt before discarding unsaved changes. Returns true if it is
- * safe to proceed (saved or discarded), false if the user cancelled.
- */
-async function confirmDiscardIfDirty(get: () => CircuitState): Promise<boolean> {
-  if (!get().dirty) return true
-  const choice = await window.api.confirm({
-    type: 'warning',
-    message: 'Save changes to the current circuit?',
-    detail: 'Your changes will be lost if you don’t save them.',
-    buttons: ['Save', "Don't Save", 'Cancel'],
-    defaultId: 0,
-    cancelId: 2
-  })
-  if (choice === 2) return false
-  if (choice === 0) return get().save()
-  return true
-}

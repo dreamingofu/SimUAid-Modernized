@@ -3,7 +3,7 @@
 // (virtual connections — connected with no drawn wire). The simulator (Phase 3)
 // and the editor's net highlighting/junction dots both consume this.
 
-import type { Netlist, PinId } from '../model/types'
+import { parsePinId, type Netlist, type PinId } from '../model/types'
 import { getAllPins } from '../geometry/pins'
 import { segmentsToPoints } from '../geometry/wireRouting'
 import type { Point } from '../geometry/coords'
@@ -45,11 +45,10 @@ function coordKey(p: Point): string {
 }
 
 /** The effective label of a pin: its explicit pin label if set, else ''. */
-function pinLabelFor(netlist: Netlist, pinId: PinId, pinName?: string): string {
-  const componentId = pinId.slice(0, pinId.indexOf('#'))
+function pinLabelFor(netlist: Netlist, pinId: PinId): string {
+  const { componentId, pinName } = parsePinId(pinId)
   const component = netlist.components.find((c) => c.id === componentId)
-  if (!component || !pinName) return ''
-  return component.pinLabels[pinName] ?? ''
+  return component?.pinLabels[pinName] ?? ''
 }
 
 export function resolveNets(netlist: Netlist): Net[] {
@@ -73,7 +72,7 @@ export function resolveNets(netlist: Netlist): Net[] {
   // 3. Virtual connections: pins sharing the same non-empty label are merged.
   const byLabel = new Map<string, PinId[]>()
   for (const pin of pins) {
-    const label = pinLabelFor(netlist, pin.pinId, pin.name)
+    const label = pinLabelFor(netlist, pin.pinId)
     if (!label) continue
     const list = byLabel.get(label) ?? []
     list.push(pin.pinId)
@@ -113,7 +112,7 @@ export function findDuplicateOutputLabels(netlist: Netlist): string[] {
   const counts = new Map<string, number>()
   for (const pin of getAllPins(netlist)) {
     if (pin.role !== 'output') continue
-    const label = pinLabelFor(netlist, pin.pinId, pin.name)
+    const label = pinLabelFor(netlist, pin.pinId)
     if (!label) continue
     counts.set(label, (counts.get(label) ?? 0) + 1)
   }
