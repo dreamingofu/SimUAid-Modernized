@@ -49,6 +49,22 @@ export function getPinById(netlist: Netlist, pinId: PinId): AbsolutePin | null {
   return pins.find((p) => p.name === pinName) ?? null
 }
 
+/** Width of the pin a wire endpoint references; 1 for dangling ends. */
+export function pinWidth(netlist: Netlist, pinId: PinId | null): number {
+  if (!pinId) return 1
+  const { componentId, pinName } = parsePinId(pinId)
+  const comp = netlist.components.find((c) => c.id === componentId)
+  if (!comp) return 1
+  return defOf(comp).pins.find((p) => p.name === pinName)?.width ?? 1
+}
+
+export function busWidthOfWire(
+  netlist: Netlist,
+  wire: { fromPinId: PinId | null; toPinId: PinId | null }
+): number {
+  return Math.max(pinWidth(netlist, wire.fromPinId), pinWidth(netlist, wire.toPinId))
+}
+
 /** Finds the pin nearest to `worldPt` within `tolerance` world px, if any. */
 export function findPinAt(netlist: Netlist, worldPt: Point, tolerance: number): AbsolutePin | null {
   let best: AbsolutePin | null = null

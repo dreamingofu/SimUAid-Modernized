@@ -1,8 +1,5 @@
-// Core data model for SimUaid. Phase 1 defines the types only — no simulation
-// logic. The set of component types is the Phase 1 subset; the part-definition
-// registry (see partDefinitions.ts) is structured so the full catalog from the
-// reference manual (N-bit parts, buses, state machines, …) can be added later
-// without changing these interfaces.
+// Core data model. Pure types — geometry lives in partDefinitions.ts and all
+// behavior in sim/. Everything here serializes directly into .ckt files.
 
 export enum ComponentType {
   AND2 = 'AND2',
@@ -95,10 +92,7 @@ export function parsePinId(pinId: PinId): { componentId: string; pinName: string
   return { componentId: pinId.slice(0, i), pinName: pinId.slice(i + 1) }
 }
 
-/**
- * Resolves the current logic value at a pin. Phase 2 always returns Z (no
- * simulation); Phase 3 will supply a real resolver backed by the simulator.
- */
+/** Resolves the current simulated logic value at a pin. */
 export type PinValueResolver = (pinId: PinId) => LogicValue
 
 /** 'R' repeats the waveform from time 0; otherwise a driven logic level. */

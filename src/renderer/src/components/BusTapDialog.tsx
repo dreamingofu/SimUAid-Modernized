@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Modal from './Modal'
-import { busWidthOfWire, useCircuitStore } from '../store/circuitStore'
+import { busWidthOfWire } from '../geometry/pins'
+import { useCircuitStore } from '../store/circuitStore'
 import styles from '../styles/Modal.module.css'
 
 interface BusTapDialogProps {

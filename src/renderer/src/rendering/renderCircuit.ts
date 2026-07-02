@@ -5,7 +5,7 @@
 
 import { LogicValue, type Component, type Netlist, type PinValueResolver } from '../model/types'
 import { defOf } from '../model/partDefinitions'
-import { getAbsolutePins, pinFacing } from '../geometry/pins'
+import { busWidthOfWire, getAbsolutePins, pinFacing } from '../geometry/pins'
 import { segmentsToPoints, routeOrthogonal } from '../geometry/wireRouting'
 import { junctionPoints } from '../netlist/nets'
 import { drawComponentSymbol } from './symbols'
@@ -97,16 +97,6 @@ function drawGrid(ctx: CanvasRenderingContext2D, tl: Point, br: Point, scale: nu
   ctx.restore()
 }
 
-function isBusPin(netlist: Netlist, pinId: string | null): boolean {
-  if (!pinId) return false
-  const componentId = pinId.slice(0, pinId.indexOf('#'))
-  const pinName = pinId.slice(pinId.indexOf('#') + 1)
-  const comp = netlist.components.find((c) => c.id === componentId)
-  if (!comp) return false
-  const pin = defOf(comp).pins.find((p) => p.name === pinName)
-  return (pin?.width ?? 1) > 1
-}
-
 function drawWires(ctx: CanvasRenderingContext2D, params: RenderParams, lw: number): void {
   const { netlist } = params
   for (const wire of netlist.wires) {
@@ -114,7 +104,7 @@ function drawWires(ctx: CanvasRenderingContext2D, params: RenderParams, lw: numb
     if (pts.length < 2) continue
     const highlighted = params.highlightWireIds.has(wire.id)
     const selected = params.selectedWireIds.has(wire.id)
-    const bus = isBusPin(netlist, wire.fromPinId) || isBusPin(netlist, wire.toPinId)
+    const bus = busWidthOfWire(netlist, wire) > 1
     ctx.save()
     if (highlighted) {
       ctx.strokeStyle = COLORS.highlight
