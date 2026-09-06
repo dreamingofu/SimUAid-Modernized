@@ -1,6 +1,6 @@
 {
   "name": "simuaid-modernized",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A modern reimplementation of SimUaid, a logic-simulation desktop app.",
   "main": "./out/main/index.js",
   "author": "",
