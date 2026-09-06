@@ -17,9 +17,9 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "build:unpack": "electron-vite build && electron-builder --dir",
-    "build:mac": "electron-vite build && electron-builder --mac",
-    "build:win": "electron-vite build && electron-builder --win",
+    "build:unpack": "electron-vite build && electron-builder --dir --publish never",
+    "build:mac": "electron-vite build && electron-builder --mac --publish never",
+    "build:win": "electron-vite build && electron-builder --win --publish never",
     "test": "vitest run",
     "test:watch": "vitest"
   },
