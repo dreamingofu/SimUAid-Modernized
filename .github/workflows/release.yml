@@ -15,7 +15,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          # Pinned off macos-latest: as of the macos-26-arm64 image it breaks
+          # .p12 import / codesign keychain unlock ("SecKeychainUnlock: the
+          # user name or passphrase you entered is not correct" from
+          # `security set-key-partition-list`, reproduced twice on fresh
+          # runners with unchanged secrets). Tracked upstream at
+          # https://github.com/actions/runner-images/issues/13884. Move back
+          # to macos-latest once that's resolved.
+          - os: macos-15
             artifact: macOS
             path: dist/*.dmg
           - os: windows-latest
