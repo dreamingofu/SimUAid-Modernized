@@ -495,7 +495,13 @@ export function maxBitsFor(type: ComponentType): number {
 export function effectiveBits(type: ComponentType, bits: number | undefined): number {
   if (!isNBitType(type) && !isBusType(type)) return 0
   const minBits = type === ComponentType.BUS_TAP ? 1 : MIN_BITS
-  return Math.min(maxBitsFor(type), Math.max(minBits, bits ?? DEFAULT_BITS))
+  // Rounded and guarded, not just clamped: a width is a pin count and a vector
+  // length. A malformed value from a hand-edited .ckt would otherwise flow into
+  // new Array(n) (RangeError) and into row() loops that draw a different number
+  // of pins than the simulator allocates bits.
+  const n = Math.round(Number(bits ?? DEFAULT_BITS))
+  if (!Number.isFinite(n)) return DEFAULT_BITS
+  return Math.min(maxBitsFor(type), Math.max(minBits, n))
 }
 
 export function getPartDefinition(type: ComponentType, bits?: number): PartDefinition {
@@ -520,10 +526,17 @@ export const SM_MIN_PINS = 1
 export const SM_MAX_PINS = 8
 export const SM_DEFAULT_PINS = 4
 
-/** Effective input/output pin counts of a state machine (clamped, defaulted). */
+/**
+ * Effective input/output pin counts of a state machine (rounded, clamped,
+ * defaulted). Whole numbers for the same reason as effectiveBits: the count both
+ * lays out the pins and builds the label maps the state table compiles against.
+ */
 export function smPinCounts(c: Pick<Component, 'smInputs' | 'smOutputs'>): { nIn: number; nOut: number } {
-  const clamp = (n: number | undefined): number =>
-    Math.min(SM_MAX_PINS, Math.max(SM_MIN_PINS, n ?? SM_DEFAULT_PINS))
+  const clamp = (n: number | undefined): number => {
+    const v = Math.round(Number(n ?? SM_DEFAULT_PINS))
+    if (Number.isNaN(v)) return SM_DEFAULT_PINS
+    return Math.min(SM_MAX_PINS, Math.max(SM_MIN_PINS, v))
+  }
   return { nIn: clamp(c.smInputs), nOut: clamp(c.smOutputs) }
 }
 

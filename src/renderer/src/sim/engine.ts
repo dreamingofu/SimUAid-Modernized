@@ -184,6 +184,8 @@ export class Simulator {
   private busValue = new Map<string, LogicValue[]>()
   /** Nets whose drivers changed during the current instant; resolved once by commitNets(). */
   private dirtyNets = new Set<string>()
+  /** How many times each net's resolved value changed during the current run; drives the oscillation halt. */
+  private changeCount = new Map<string, number>()
 
   private ffState = new Map<string, { q: LogicValue; lastClk: LogicValue }>()
   private regState = new Map<string, { state: LogicValue[]; lastClk: LogicValue }>()
@@ -205,6 +207,8 @@ export class Simulator {
   private clockPinId: PinId | null = null
   private period = 1
   private quarter = 1
+  /** Upper bound on how long a circuit that settles can take; see settleLimit(). */
+  private settleBudget = 0
   private inputs: InputSource[] = []
   private scheduledUpTo = 0
 
@@ -225,6 +229,10 @@ export class Simulator {
     this.switchValues = { ...switchValues }
     this.period = Math.max(1, options.clockPeriodNs)
     this.quarter = Math.max(1, Math.round(this.period / 4))
+    // Every part can contribute its delay at most once along any settling path,
+    // so the sum over all parts is a safe over-approximation of the longest time
+    // a circuit that settles can need.
+    for (const comp of this.graph.components.values()) this.settleBudget += comp.delay
 
     for (const comp of netlist.components) {
       const sim = this.graph.components.get(comp.id)
@@ -309,7 +317,7 @@ export class Simulator {
 
     // Settle every output, then present the settled circuit as the state at t=0.
     for (const comp of this.graph.components.values()) this.enqueueEval(comp.id)
-    this.process(Infinity)
+    this.settle()
     this.time = 0
 
     for (const probeId of this.probeOrder) this.waveforms.set(probeId, [])
@@ -325,7 +333,7 @@ export class Simulator {
     this.switchValues[switchId] = next
     this.enqueueEval(switchId)
     this.flushEvals()
-    if (autoProcess) this.process(Infinity)
+    if (autoProcess) this.settle()
     return next
   }
 
@@ -361,7 +369,7 @@ export class Simulator {
   }
 
   drain(): void {
-    this.process(Infinity)
+    this.settle()
   }
 
   // ---------------------------------------------------------------- readout
@@ -614,6 +622,7 @@ export class Simulator {
         if (changed) this.netValue.set(netId, resolved)
       }
       if (!changed) continue
+      this.changeCount.set(netId, (this.changeCount.get(netId) ?? 0) + 1)
       const probes = this.probeNets.get(netId)
       if (probes) {
         const sample = this.sampleOf(netId)
@@ -700,14 +709,42 @@ export class Simulator {
     if (netId !== undefined) this.dirtyNets.add(netId)
   }
 
-  /** Runs queued events up to and including `limit`; time ends at `limit` when finite. */
-  private process(limit: number): void {
+  /**
+   * The bound for a free-running settle (a LIVE switch toggle, a CHANGE-mode Go,
+   * or Reset). The manual stops LIVE propagation at "no further output changes
+   * ... or the simulation time limit", but a single part may legally carry a
+   * 999 ns delay while the limit defaults to 100 ns, so the raw limit would
+   * declare an ordinary slow gate an oscillation. Taking whichever of the two is
+   * larger keeps every circuit that can settle running to quiescence while still
+   * cutting a runaway loop off near the limit instead of at 100,000 events.
+   */
+  private settleLimit(): number {
+    return this.time + Math.max(this.options.simTimeNs, this.settleBudget)
+  }
+
+  /**
+   * Runs queued events up to and including `limit`.
+   *
+   * `advanceTime` moves the clock to `limit` once the queue drains — right for
+   * Step/Go, which run a defined window, but wrong for a settle, where the clock
+   * must stop at the last event that actually happened. `haltOnLimit` treats
+   * "reached the bound with events still pending" as a circuit that never
+   * settles, which is the case for a settle but normal for Step/Go (their
+   * leftovers belong to the next window).
+   */
+  private process(limit: number, advanceTime = true, haltOnLimit = false): void {
     this.oscillated = false
+    this.changeCount.clear()
     let count = 0
     this.flushEvals()
     while (this.queue.size > 0) {
       const t = this.queue.peek()!.time
-      if (t > limit) break
+      if (t > limit) {
+        // Step/Go leave later events for the next window; a settle that still
+        // has work pending at its bound is a circuit that never settles.
+        if (haltOnLimit) this.haltOscillation()
+        break
+      }
       this.time = t
       const batch: SimEvent[] = []
       while (this.queue.size > 0 && this.queue.peek()!.time === t) {
@@ -719,19 +756,49 @@ export class Simulator {
       }
       this.applyInstant(batch)
     }
-    if (Number.isFinite(limit)) this.time = Math.max(this.time, limit)
+    if (advanceTime && Number.isFinite(limit)) this.time = Math.max(this.time, limit)
   }
 
-  /** Event-limit hit: mark every net still changing as X and drop the queue. */
+  /** Propagates until the circuit is quiet, or abandons it as oscillating. */
+  private settle(): void {
+    this.process(this.settleLimit(), false, true)
+  }
+
+  /**
+   * The run was abandoned without settling: every net that kept switching is
+   * undetermined, so force those to X and drop the queue.
+   *
+   * The set comes from how often each net actually changed this run, not from
+   * whichever events happened to be in flight at the cut-off — a ring carries
+   * one event at a time, so the queue names only one of its nets and the rest
+   * would keep stale levels that contradict their own inputs. A net that
+   * changed once or twice settled (an ordinary transition or a glitch) and
+   * keeps its value.
+   *
+   * The X is written to the driving pins and committed through commitNets(), not
+   * poked into netValue directly: that records the probe sample, and it means a
+   * later evaluation that drives a definite value differs from what the pin
+   * holds and therefore schedules an event. Writing netValue alone would leave
+   * the drivers holding their pre-halt level, so the net could never be revived
+   * and the circuit would stay wrong until Reset.
+   */
   private haltOscillation(): void {
-    for (const ev of this.queue.values()) {
-      if (ev.kind !== 'drive' && ev.kind !== 'busdrive') continue
-      const netId = this.graph.pinToNet.get(ev.pinId)
-      if (netId === undefined) continue
-      const width = this.widthOf(netId)
-      if (width > 1) this.busValue.set(netId, xVec(width))
-      else this.netValue.set(netId, X)
+    for (const [netId, count] of this.changeCount) {
+      if (count <= 2) continue
+      const net = this.graph.nets.get(netId)
+      if (!net) continue
+      const width = net.width
+      for (const pinId of net.driverPinIds) {
+        if (width > 1) this.busDrives.current.set(pinId, xVec(width))
+        else this.drives.current.set(pinId, X)
+      }
+      // Leave the net value alone: commitNets() below re-resolves it from those
+      // drivers, which is what records the probe sample.
+      this.dirtyNets.add(netId)
     }
+    // Record the forced values on the probes, then discard everything the commit
+    // queued: the halt is terminal and must not restart the oscillation.
+    this.commitNets()
     this.queue.clear()
     this.drives.clearPending()
     this.busDrives.clearPending()
