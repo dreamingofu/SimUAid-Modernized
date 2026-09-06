@@ -1,5 +1,5 @@
 import { makePinId, parsePinId, type ComponentType, type Netlist, type PinId } from '../model/types'
-import { DEFAULT_BITS, defOf, isBusType, isNBitType, type PinRole } from '../model/partDefinitions'
+import { defOf, effectiveBits, type PinRole } from '../model/partDefinitions'
 import { resolveNets } from '../netlist/nets'
 
 const SINK_ROLES: ReadonlySet<PinRole> = new Set(['input', 'clock', 'preset', 'clear'])
@@ -83,8 +83,10 @@ export function buildSimGraph(netlist: Netlist): SimGraph {
     components.set(comp.id, {
       id: comp.id,
       type: comp.type,
-      delay: comp.delay,
-      bits: comp.bits ?? (isNBitType(comp.type) || isBusType(comp.type) ? DEFAULT_BITS : 0),
+      // The manual allows 1..999 ns; the engine relies on delay >= 1 (an output
+      // change is always strictly in the future), so files are clamped here.
+      delay: Math.max(1, Math.round(comp.delay) || 1),
+      bits: effectiveBits(comp.type, comp.bits),
       tapStart: comp.tapStart ?? 0,
       pinNet,
       inputPinNames,

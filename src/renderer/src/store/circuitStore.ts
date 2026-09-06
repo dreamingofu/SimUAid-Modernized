@@ -25,8 +25,9 @@ import {
   stampNetIds,
   touch
 } from './netlistOps'
-import { defOf, getPartDefinition } from '../model/partDefinitions'
+import { DEFAULT_BITS, defOf, getPartDefinition } from '../model/partDefinitions'
 import { Simulator, type WaveformTrace } from '../sim/engine'
+import { hexToVec } from '../sim/values'
 import {
   createEmptyNetlist,
   deserializeNetlist,
@@ -594,8 +595,8 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
       const isInputSignal = comp.type === ComponentType.INPUT_SIGNAL
       if (comp.type === ComponentType.BUS_INPUT) {
         // The hex string is the device label; no separate pin labels allowed.
-        const bits = comp.bits ?? 2
-        const valid = value === '' || (/^[0-9a-fA-F]+$/.test(value) && parseInt(value, 16) < 2 ** bits)
+        const bits = comp.bits ?? DEFAULT_BITS
+        const valid = value === '' || hexToVec(value, bits) !== null
         get().updateComponent(comp.id, { label: value })
         set((s) => ({
           interaction: { ...s.interaction, inlineEdit: null },

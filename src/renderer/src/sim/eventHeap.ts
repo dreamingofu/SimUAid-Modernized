@@ -2,10 +2,15 @@
 
 import type { LogicValue, PinId } from '../model/types'
 
+/**
+ * Queued output changes and stimulus. Component evaluations are not events: they
+ * run immediately after the drive that triggers them (see Simulator.flushEvals).
+ * `version` marks drives scheduled by a component output; a drive whose version is
+ * no longer the pin's latest was superseded by a later evaluation and is skipped.
+ */
 export type SimEvent =
-  | { time: number; seq: number; kind: 'drive'; pinId: PinId; value: LogicValue }
-  | { time: number; seq: number; kind: 'busdrive'; pinId: PinId; value: LogicValue[] }
-  | { time: number; seq: number; kind: 'eval'; componentId: string }
+  | { time: number; seq: number; kind: 'drive'; pinId: PinId; value: LogicValue; version?: number }
+  | { time: number; seq: number; kind: 'busdrive'; pinId: PinId; value: LogicValue[]; version?: number }
   | { time: number; seq: number; kind: 'softreset' }
   | { time: number; seq: number; kind: 'sample'; slot: number }
 

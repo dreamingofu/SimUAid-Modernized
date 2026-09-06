@@ -1,3 +1,17 @@
+// Event-driven simulator. Parts' behavior lives in logic.ts / parts.ts; this file
+// owns time, the event queue, net resolution, stimulus (clock, input signals,
+// checker) and sequential state.
+//
+// Semantics (see the decisions recorded in the test suite):
+//  - Every part output has an inertial delay >= 1 ns: a later evaluation
+//    supersedes a change still in flight, so pulses shorter than the delay never
+//    reach the output.
+//  - All events at one instant are applied first, affected nets are resolved
+//    once, then affected components are evaluated once. Same-instant changes are
+//    seen together and results never depend on queue order.
+//  - Nets resolve std_logic style: Z releases, agreeing drivers keep the value,
+//    disagreement or an X driver gives X.
+
 import {
   ComponentType,
   LogicValue,
@@ -8,10 +22,25 @@ import {
   type SimulationOptions
 } from '../model/types'
 import { buildSimGraph, type SimComponent, type SimGraph, type SimNet } from './graph'
-import { evalGate, gateFamily, nextFlipFlopQ, type FlipFlopKind } from './logic'
-import { compileTable, termsMatch, type CompiledSmRow } from './stateMachine'
+import { evalGate, gateFamily, isRisingEdge, nextFlipFlopQ, type FlipFlopKind } from './logic'
+import {
+  activeSmRow,
+  counterCarry,
+  evalAdder,
+  evalBusTap,
+  evalComplementer,
+  evalDecoder,
+  evalMux,
+  evalMux2to1,
+  evalTristate,
+  initialSmState,
+  nextRegisterState,
+  selectPinsOf,
+  smOutputValue
+} from './parts'
+import { compileTable, type CompiledSmRow } from './stateMachine'
 import { EventHeap, type SimEvent } from './eventHeap'
-import { clean, hexToVec, numToVec, vecEqual, vecToHex, vecToNum, xVec, zVec } from './values'
+import { complement, fitVec, hexToVec, resolveDrivers, vecEqual, vecToHex, xVec, zVec } from './values'
 
 export { vecToHex, hexToVec } from './values'
 
@@ -39,7 +68,28 @@ interface InputSource {
   initial: LogicValue
 }
 
-const CONSTANT_SOURCES = new Set([ComponentType.VCC, ComponentType.GROUND])
+interface Checker {
+  compId: string
+  outPinId: PinId
+  input: string
+  output: string
+}
+
+/** A SimEvent without its ordering fields (distributes over the union). */
+type EventBody = SimEvent extends infer E ? (E extends SimEvent ? Omit<E, 'time' | 'seq'> : never) : never
+
+/** Parts that only source or sink signals; nothing to evaluate. */
+const PASSIVE = new Set([
+  ComponentType.VCC,
+  ComponentType.GROUND,
+  ComponentType.CLOCK,
+  ComponentType.INPUT_SIGNAL,
+  ComponentType.PROBE,
+  ComponentType.SEVEN_SEGMENT,
+  ComponentType.BUS_INPUT,
+  ComponentType.BUS_PROBE,
+  ComponentType.CHECKER
+])
 
 const CLOCKED_NBIT = new Set([
   ComponentType.N_COUNTER,
@@ -50,14 +100,15 @@ const CLOCKED_NBIT = new Set([
   ComponentType.N_SHIFT_BIDIR
 ])
 
+const TRISTATES = new Set([
+  ComponentType.TRISTATE_RIGHT,
+  ComponentType.TRISTATE_LEFT,
+  ComponentType.TRISTATE_UP,
+  ComponentType.TRISTATE_DOWN
+])
+
 function isFlipFlop(type: ComponentType): boolean {
   return type === ComponentType.D_FLIPFLOP || type === ComponentType.JK_FLIPFLOP
-}
-
-function complement(v: LogicValue): LogicValue {
-  if (v === ZERO) return ONE
-  if (v === ONE) return ZERO
-  return X
 }
 
 function checkerDrive(ch: string | undefined): LogicValue {
@@ -76,38 +127,91 @@ function inputValueAt(source: InputSource, t: number): LogicValue {
   return v
 }
 
+/**
+ * The value each output pin drives, plus inertial-delay bookkeeping: the change
+ * still in flight for a pin (if any) and a version stamped on its event so a
+ * superseded event is recognised and skipped when it comes up.
+ */
+class DriveChannel<T> {
+  readonly current = new Map<PinId, T>()
+  private pending = new Map<PinId, T>()
+  private version = new Map<PinId, number>()
+
+  constructor(private equals: (a: T | undefined, b: T) => boolean) {}
+
+  clear(): void {
+    this.current.clear()
+    this.clearPending()
+  }
+
+  clearPending(): void {
+    this.pending.clear()
+  }
+
+  /**
+   * Decides whether a new output value needs an event. Returns the version to
+   * stamp on it, or null when the pin is already going to have that value or the
+   * change merely cancels a pending one (a pulse shorter than the delay).
+   */
+  plan(pinId: PinId, value: T): number | null {
+    const pending = this.pending.get(pinId)
+    if (this.equals(pending ?? this.current.get(pinId), value)) return null
+    const version = (this.version.get(pinId) ?? 0) + 1
+    this.version.set(pinId, version)
+    this.pending.delete(pinId)
+    if (this.equals(this.current.get(pinId), value)) return null
+    this.pending.set(pinId, value)
+    return version
+  }
+
+  /** Applies a queued drive; false when it was superseded or changes nothing. */
+  apply(pinId: PinId, value: T, version: number | undefined): boolean {
+    if (version !== undefined) {
+      if (version !== this.version.get(pinId)) return false
+      this.pending.delete(pinId)
+    }
+    if (this.equals(this.current.get(pinId), value)) return false
+    this.current.set(pinId, value)
+    return true
+  }
+}
+
 export class Simulator {
   private graph: SimGraph
-  private pinDrive = new Map<PinId, LogicValue>()
+  private drives = new DriveChannel<LogicValue>((a, b) => a === b)
+  private busDrives = new DriveChannel<LogicValue[]>(vecEqual)
   private netValue = new Map<string, LogicValue>()
-  private busDrive = new Map<PinId, LogicValue[]>()
   private busValue = new Map<string, LogicValue[]>()
-  private busProbeIds = new Set<string>()
+  /** Nets whose drivers changed during the current instant; resolved once by commitNets(). */
+  private dirtyNets = new Set<string>()
+
   private ffState = new Map<string, { q: LogicValue; lastClk: LogicValue }>()
   private regState = new Map<string, { state: LogicValue[]; lastClk: LogicValue }>()
   private smTables = new Map<string, CompiledSmRow[]>()
-  private smState = new Map<string, { state: number | null; lastClk: LogicValue }>()
+  private smState = new Map<string, { state: number; lastClk: LogicValue }>()
   private smActive = new Map<string, number | null>()
-  private checker: {
-    compId: string
-    outPinId: PinId
-    input: string
-    output: string
-    step: number
-  } | null = null
+
+  private checker: Checker | null = null
   private checkerFailures: { slot: number; expected: string; actual: LogicValue }[] = []
   private checkerSampled = 0
+
   private queue = new EventHeap()
   private seq = 0
-  private switchValues: Record<string, LogicValue>
+  /** Components whose inputs changed and that must be re-evaluated now (FIFO). */
+  private evalQueue: string[] = []
+  private evalQueued = new Set<string>()
 
+  private switchValues: Record<string, LogicValue>
   private clockPinId: PinId | null = null
-  private halfPeriod = 0
+  private period = 1
+  private quarter = 1
   private inputs: InputSource[] = []
+  private scheduledUpTo = 0
+
+  private busProbeIds = new Set<string>()
   private probeNets = new Map<string, string[]>()
   private probeOrder: string[] = []
   private waveforms = new Map<string, WaveformSample[]>()
-  private scheduledUpTo = 0
 
   time = 0
   oscillated = false
@@ -119,7 +223,8 @@ export class Simulator {
   ) {
     this.graph = buildSimGraph(netlist)
     this.switchValues = { ...switchValues }
-    this.halfPeriod = Math.max(1, Math.round(options.clockPeriodNs / 2))
+    this.period = Math.max(1, options.clockPeriodNs)
+    this.quarter = Math.max(1, Math.round(this.period / 4))
 
     for (const comp of netlist.components) {
       const sim = this.graph.components.get(comp.id)
@@ -127,7 +232,7 @@ export class Simulator {
       if (comp.type === ComponentType.CLOCK) {
         this.clockPinId = makePinId(comp.id, 'out')
       } else if (comp.type === ComponentType.INPUT_SIGNAL) {
-        this.inputs.push(this.makeInputSource(makePinId(comp.id, 'out'), comp.signal ?? []))
+        this.inputs.push(makeInputSource(makePinId(comp.id, 'out'), comp.signal ?? []))
       } else if (comp.type === ComponentType.STATE_MACHINE) {
         this.smTables.set(comp.id, compileTable(comp).rows)
       } else if (comp.type === ComponentType.CHECKER && comp.chk) {
@@ -135,16 +240,13 @@ export class Simulator {
           compId: comp.id,
           outPinId: makePinId(comp.id, 'out'),
           input: comp.chk.input,
-          output: comp.chk.output,
-          step: Math.max(1, options.clockPeriodNs)
+          output: comp.chk.output
         }
       } else if (comp.type === ComponentType.PROBE || comp.type === ComponentType.BUS_PROBE) {
         const netId = sim.pinNet['in']
         if (netId !== undefined) {
           this.probeOrder.push(comp.id)
-          const list = this.probeNets.get(netId) ?? []
-          list.push(comp.id)
-          this.probeNets.set(netId, list)
+          this.probeNets.set(netId, [...(this.probeNets.get(netId) ?? []), comp.id])
           if (comp.type === ComponentType.BUS_PROBE) this.busProbeIds.add(comp.id)
         }
       }
@@ -157,152 +259,117 @@ export class Simulator {
     return this.netlist
   }
 
+  // ---------------------------------------------------------------- control
+
+  /** Back to time 0 with every device in its default state (manual §1.5.5). */
   reset(): void {
     this.time = 0
     this.oscillated = false
     this.scheduledUpTo = 0
-    this.pinDrive.clear()
+    this.drives.clear()
+    this.busDrives.clear()
     this.netValue.clear()
-    this.busDrive.clear()
     this.busValue.clear()
+    this.dirtyNets.clear()
     this.ffState.clear()
     this.regState.clear()
     this.smState.clear()
     this.smActive.clear()
     this.queue.clear()
+    this.evalQueue = []
+    this.evalQueued.clear()
     this.waveforms.clear()
-
-    for (const comp of this.netlist.components) {
-      if (comp.type === ComponentType.BUS_INPUT) {
-        const bits = comp.bits ?? 2
-        this.busDrive.set(makePinId(comp.id, 'out'), hexToVec(comp.label, bits) ?? xVec(bits))
-      }
-    }
-
-    for (const comp of this.graph.components.values()) {
-      switch (comp.type) {
-        case ComponentType.SWITCH:
-          this.pinDrive.set(makePinId(comp.id, 'out'), this.switchValues[comp.id] ?? ZERO)
-          break
-        case ComponentType.VCC:
-          this.pinDrive.set(makePinId(comp.id, 'out'), ONE)
-          break
-        case ComponentType.GROUND:
-          this.pinDrive.set(makePinId(comp.id, 'out'), ZERO)
-          break
-        case ComponentType.CLOCK:
-          this.pinDrive.set(makePinId(comp.id, 'out'), this.options.clockInitialValue)
-          break
-        default:
-          break
-      }
-    }
-    for (const src of this.inputs) this.pinDrive.set(src.pinId, src.initial)
-
     this.checkerFailures = []
     this.checkerSampled = 0
-    if (this.checker) {
-      this.pinDrive.set(this.checker.outPinId, checkerDrive(this.checker.input[0]))
+
+    // Sources drive their initial values before anything is evaluated.
+    for (const comp of this.netlist.components) {
+      if (comp.type === ComponentType.BUS_INPUT) {
+        const bits = this.graph.components.get(comp.id)!.bits
+        this.busDrives.current.set(makePinId(comp.id, 'out'), hexToVec(comp.label, bits) ?? xVec(bits))
+      }
     }
+    for (const comp of this.graph.components.values()) {
+      const out = makePinId(comp.id, 'out')
+      if (comp.type === ComponentType.SWITCH) this.drives.current.set(out, this.switchValues[comp.id] ?? ZERO)
+      else if (comp.type === ComponentType.VCC) this.drives.current.set(out, ONE)
+      else if (comp.type === ComponentType.GROUND) this.drives.current.set(out, ZERO)
+      else if (comp.type === ComponentType.CLOCK) this.drives.current.set(out, this.options.clockInitialValue)
+    }
+    for (const src of this.inputs) this.drives.current.set(src.pinId, src.initial)
+    if (this.checker) this.drives.current.set(this.checker.outPinId, checkerDrive(this.checker.input[0]))
 
     for (const net of this.graph.nets.values()) {
       if (net.width > 1) this.busValue.set(net.id, this.resolveBusNet(net))
       else this.netValue.set(net.id, this.resolveNet(net))
     }
-
     for (const comp of this.graph.components.values()) {
-      if (isFlipFlop(comp.type)) {
-        this.ffState.set(comp.id, { q: X, lastClk: this.readNet(comp.pinNet['CLK']) })
-      } else if (CLOCKED_NBIT.has(comp.type)) {
-        this.regState.set(comp.id, {
-          state: xVec(comp.bits || 1),
-          lastClk: this.readNet(comp.pinNet['CLK'])
-        })
-      } else if (comp.type === ComponentType.STATE_MACHINE) {
-        const rows = this.smTables.get(comp.id) ?? []
-        this.smState.set(comp.id, {
-          state: rows.length > 0 ? rows[0].present : 0,
-          lastClk: this.readNet(comp.pinNet['CLK'])
-        })
-      }
+      this.seedSequentialState(comp, this.readPin(comp, 'CLK'))
     }
-    for (const comp of this.graph.components.values()) this.enqueueEval(0, comp.id)
+
+    // Settle every output, then present the settled circuit as the state at t=0.
+    for (const comp of this.graph.components.values()) this.enqueueEval(comp.id)
     this.process(Infinity)
+    this.time = 0
 
     for (const probeId of this.probeOrder) this.waveforms.set(probeId, [])
     for (const [netId, ids] of this.probeNets) {
-      const net = this.graph.nets.get(netId)
-      const isBus = (net?.width ?? 1) > 1
-      const v = isBus ? X : this.readNet(netId)
-      const hex = isBus ? vecToHex(this.busValue.get(netId) ?? xVec(net!.width)) : undefined
-      for (const id of ids) {
-        this.waveforms.get(id)!.push(hex !== undefined ? { t: 0, v, hex } : { t: 0, v })
-      }
+      const sample = this.sampleOf(netId)
+      for (const id of ids) this.waveforms.get(id)!.push(sample)
     }
   }
 
+  /** Flips a switch. LIVE mode propagates immediately; CHANGE mode leaves the event queued. */
   toggle(switchId: string, autoProcess = true): LogicValue {
     const next = this.switchValues[switchId] === ONE ? ZERO : ONE
     this.switchValues[switchId] = next
-    this.enqueueEval(this.time, switchId)
+    this.enqueueEval(switchId)
+    this.flushEvals()
     if (autoProcess) this.process(Infinity)
     return next
   }
 
+  /** Runs one clock period: to a quarter period before the next active edge (Appendix B). */
   step(): void {
-    const limit = this.options.simTimeNs
     if (this.clockPinId !== null) {
-      const period = Math.max(1, this.options.clockPeriodNs)
-      const quarter = period / 4
-      const target = Math.min(limit, (Math.floor((this.time + quarter) / period) + 1) * period - quarter)
+      const target = this.quarterBeforeEdge(this.time + this.period, this.time)
       this.scheduleStimulus(target)
       this.process(target)
     } else if (this.inputs.length > 0) {
-      this.scheduleStimulus(limit)
+      const horizon = this.time + this.options.simTimeNs
+      this.scheduleStimulus(horizon)
       const next = this.queue.peek()
-      this.process(next ? Math.min(next.time, limit) : limit)
+      this.process(next ? Math.min(next.time, horizon) : horizon)
     }
   }
 
+  /** Runs for the simulation time limit, stopping a quarter period before an active edge. */
   go(): void {
-    const limit = this.options.simTimeNs
-    let target = limit
-    if (this.clockPinId !== null) {
-      const period = Math.max(1, this.options.clockPeriodNs)
-      const quarter = period / 4
-      target = Math.floor((limit + quarter) / period) * period - quarter
-      if (target <= 0) target = limit
-    }
-    this.scheduleStimulus(limit)
+    const horizon = this.time + this.options.simTimeNs
+    const target = this.clockPinId !== null ? this.quarterBeforeEdge(horizon, this.time) : horizon
+    this.scheduleStimulus(horizon)
     this.process(target)
   }
 
+  /** CHANGE mode: applies one queued output change and everything it triggers at that instant. */
   changeStep(): boolean {
     const ev = this.queue.pop()
     if (!ev) return false
     this.time = ev.time
-    this.dispatch(ev)
+    this.applyInstant([ev])
     return true
-  }
-
-  private dispatch(ev: SimEvent): void {
-    if (ev.kind === 'drive') this.applyDrive(ev)
-    else if (ev.kind === 'busdrive') this.applyBusDrive(ev)
-    else if (ev.kind === 'softreset') this.softReset(ev.time)
-    else if (ev.kind === 'sample') this.sampleChecker(ev.slot)
-    else this.applyEval(ev)
   }
 
   drain(): void {
     this.process(Infinity)
   }
 
+  // ---------------------------------------------------------------- readout
+
   getPinValues(): Record<PinId, LogicValue> {
     const out: Record<PinId, LogicValue> = {}
     for (const [pinId, netId] of this.graph.pinToNet) {
-      const net = this.graph.nets.get(netId)
-      if (net && net.width > 1) continue // bus pins publish via getBusPinValues
-      out[pinId] = this.readNet(netId)
+      if (this.widthOf(netId) === 1) out[pinId] = this.readNet(netId)
     }
     return out
   }
@@ -310,9 +377,8 @@ export class Simulator {
   getBusPinValues(): Record<PinId, string> {
     const out: Record<PinId, string> = {}
     for (const [pinId, netId] of this.graph.pinToNet) {
-      const net = this.graph.nets.get(netId)
-      if (!net || net.width <= 1) continue
-      out[pinId] = vecToHex(this.busValue.get(netId) ?? zVec(net.width))
+      const width = this.widthOf(netId)
+      if (width > 1) out[pinId] = vecToHex(this.busValue.get(netId) ?? zVec(width))
     }
     return out
   }
@@ -325,121 +391,18 @@ export class Simulator {
     }))
   }
 
+  /** True when any pin in the circuit reads X or Z. */
   hasXZ(): boolean {
-    for (const netId of this.graph.pinToNet.values()) {
-      const net = this.graph.nets.get(netId)
-      if (net && net.width > 1) {
-        const vec = this.busValue.get(netId)
-        if (!vec || vec.some((v) => v === X || v === Z)) return true
-        continue
+    const bad = (v: LogicValue): boolean => v === X || v === Z
+    for (const net of this.graph.nets.values()) {
+      if (net.width > 1) {
+        const vec = this.busValue.get(net.id)
+        if (!vec || vec.some(bad)) return true
+      } else if (bad(this.readNet(net.id))) {
+        return true
       }
-      const v = this.readNet(netId)
-      if (v === X || v === Z) return true
     }
     return false
-  }
-
-  private makeInputSource(pinId: PinId, signal: SignalRow[]): InputSource {
-    const sorted = [...signal].sort((a, b) => a.timeNs - b.timeNs)
-    const repeat = sorted.find((r) => r.value === 'R')
-    const rows = sorted.filter((r) => r.value !== 'R')
-    const source: InputSource = { pinId, rows, cycleNs: repeat ? repeat.timeNs : 0, initial: Z }
-    source.initial = inputValueAt(source, 0)
-    return source
-  }
-
-  private scheduleStimulus(target: number): void {
-    if (target <= this.scheduledUpTo) return
-    const from = this.scheduledUpTo
-
-    if (this.clockPinId !== null) {
-      const initial = this.options.clockInitialValue
-      let k = Math.floor(from / this.halfPeriod) + 1
-      for (; k * this.halfPeriod <= target; k++) {
-        this.queue.push({
-          time: k * this.halfPeriod,
-          seq: this.seq++,
-          kind: 'drive',
-          pinId: this.clockPinId,
-          value: k % 2 === 1 ? complement(initial) : initial
-        })
-      }
-    }
-
-    for (const src of this.inputs) {
-      if (src.rows.length === 0) continue
-      if (src.cycleNs > 0) {
-        for (let cycle = Math.floor(from / src.cycleNs); cycle * src.cycleNs <= target; cycle++) {
-          const base = cycle * src.cycleNs
-          for (const row of src.rows) {
-            const at = base + row.timeNs
-            if (at > from && at <= target) {
-              this.queue.push({ time: at, seq: this.seq++, kind: 'drive', pinId: src.pinId, value: row.value as LogicValue })
-            }
-          }
-        }
-      } else {
-        for (const row of src.rows) {
-          if (row.timeNs > from && row.timeNs <= target) {
-            this.queue.push({ time: row.timeNs, seq: this.seq++, kind: 'drive', pinId: src.pinId, value: row.value as LogicValue })
-          }
-        }
-      }
-    }
-
-    if (this.checker) {
-      const { step, input, output, outPinId } = this.checker
-      for (let slot = 0; slot < input.length; slot++) {
-        const driveAt = slot * step
-        const sampleAt = driveAt + step * 0.75
-        if (driveAt > from && driveAt <= target) {
-          this.queue.push({
-            time: driveAt,
-            seq: this.seq++,
-            kind: 'drive',
-            pinId: outPinId,
-            value: checkerDrive(input[slot])
-          })
-          if (input[slot] === 'R') {
-            this.queue.push({ time: driveAt, seq: this.seq++, kind: 'softreset' })
-          }
-        }
-        if (sampleAt > from && sampleAt <= target && output[slot] !== 'X' && output[slot] !== 'R') {
-          this.queue.push({ time: sampleAt, seq: this.seq++, kind: 'sample', slot })
-        }
-      }
-    }
-
-    this.scheduledUpTo = target
-  }
-
-  /** Checker 'R': clear all sequential state without disturbing time or waveforms. */
-  private softReset(time: number): void {
-    for (const [id, ff] of this.ffState) {
-      this.ffState.set(id, { q: X, lastClk: ff.lastClk })
-      this.enqueueEval(time, id)
-    }
-    for (const [id, reg] of this.regState) {
-      this.regState.set(id, { state: xVec(reg.state.length), lastClk: reg.lastClk })
-      this.enqueueEval(time, id)
-    }
-    for (const [id, sm] of this.smState) {
-      const rows = this.smTables.get(id) ?? []
-      this.smState.set(id, { state: rows.length > 0 ? rows[0].present : 0, lastClk: sm.lastClk })
-      this.enqueueEval(time, id)
-    }
-  }
-
-  private sampleChecker(slot: number): void {
-    if (!this.checker) return
-    const comp = this.graph.components.get(this.checker.compId)
-    if (!comp) return
-    const actual = this.readNet(comp.pinNet['in'])
-    const expected = this.checker.output[slot]
-    this.checkerSampled++
-    const matches =
-      (expected === '0' && actual === ZERO) || (expected === '1' && actual === ONE)
-    if (!matches) this.checkerFailures.push({ slot, expected, actual })
   }
 
   getCheckerResult(): { total: number; sampled: number; failures: number } | null {
@@ -448,496 +411,10 @@ export class Simulator {
     return { total, sampled: this.checkerSampled, failures: this.checkerFailures.length }
   }
 
-  /** Buses allow a single active driver; no drivers -> Z-fill; contention -> X-fill. */
-  private resolveBusNet(net: SimNet): LogicValue[] {
-    if (net.driverPinIds.length === 0) return zVec(net.width)
-    let value: LogicValue[] | null = null
-    for (const pinId of net.driverPinIds) {
-      const drive = this.busDrive.get(pinId)
-      if (!drive || drive.every((v) => v === Z)) continue
-      if (value !== null) return xVec(net.width)
-      value = drive
-    }
-    if (value === null) return zVec(net.width)
-    if (value.length === net.width) return value
-    const padded = xVec(net.width)
-    for (let i = 0; i < Math.min(value.length, net.width); i++) padded[i] = value[i]
-    return padded
-  }
-
-  private readBus(comp: SimComponent, pinName: string, n: number): LogicValue[] {
-    const netId = comp.pinNet[pinName]
-    if (netId === undefined) return zVec(n)
-    const vec = this.busValue.get(netId)
-    if (!vec) return zVec(n)
-    if (vec.length === n) return vec
-    const out = xVec(n)
-    for (let i = 0; i < Math.min(vec.length, n); i++) out[i] = vec[i]
-    return out
-  }
-
-  private scheduleBusOutput(comp: SimComponent, pinName: string, value: LogicValue[], time: number): void {
-    if (!(pinName in comp.pinNet)) return
-    const pinId = makePinId(comp.id, pinName)
-    if (vecEqual(this.busDrive.get(pinId), value)) return
-    this.queue.push({ time: time + comp.delay, seq: this.seq++, kind: 'busdrive', pinId, value })
-  }
-
-  private applyBusDrive(ev: Extract<SimEvent, { kind: 'busdrive' }>): void {
-    if (vecEqual(this.busDrive.get(ev.pinId), ev.value)) return
-    this.busDrive.set(ev.pinId, ev.value)
-    const netId = this.graph.pinToNet.get(ev.pinId)
-    if (netId === undefined) return
-    const net = this.graph.nets.get(netId)
-    if (!net) return
-    const resolved = this.resolveBusNet(net)
-    if (vecEqual(this.busValue.get(netId), resolved)) return
-    this.busValue.set(netId, resolved)
-    const probes = this.probeNets.get(netId)
-    if (probes) {
-      const hex = vecToHex(resolved)
-      for (const id of probes) this.waveforms.get(id)?.push({ t: ev.time, v: X, hex })
-    }
-    for (const readerId of this.graph.readers.get(netId) ?? []) {
-      this.enqueueEval(ev.time, readerId)
-    }
-  }
-
-  /** Z drives release the net; one active driver wins; contention is X. */
-  private resolveNet(net: SimNet): LogicValue {
-    if (net.driverPinIds.length === 0) return Z
-    let value: LogicValue | null = null
-    for (const pinId of net.driverPinIds) {
-      const drive = this.pinDrive.get(pinId) ?? X
-      if (drive === Z) continue
-      if (value !== null) return X
-      value = drive
-    }
-    return value ?? Z
-  }
-
-  private readNet(netId: string | undefined): LogicValue {
-    if (netId === undefined) return Z
-    return this.netValue.get(netId) ?? Z
-  }
-
-  private readPin(comp: SimComponent, name: string): LogicValue {
-    return this.readNet(comp.pinNet[name])
-  }
-
-  private readVec(comp: SimComponent, prefix: string, n: number): LogicValue[] {
-    const vec: LogicValue[] = []
-    for (let i = 0; i < n; i++) vec.push(this.readPin(comp, `${prefix}${i}`))
-    return vec
-  }
-
-  private enqueueEval(time: number, componentId: string): void {
-    this.queue.push({ time, seq: this.seq++, kind: 'eval', componentId })
-  }
-
-  private scheduleOutput(comp: SimComponent, pinName: string, value: LogicValue, time: number): void {
-    if (!(pinName in comp.pinNet)) return
-    const pinId = makePinId(comp.id, pinName)
-    if (this.pinDrive.get(pinId) === value) return
-    this.queue.push({ time: time + comp.delay, seq: this.seq++, kind: 'drive', pinId, value })
-  }
-
-  private scheduleVec(comp: SimComponent, prefix: string, values: LogicValue[], time: number): void {
-    for (let i = 0; i < values.length; i++) this.scheduleOutput(comp, `${prefix}${i}`, values[i], time)
-  }
-
-  private process(limit: number): void {
-    this.oscillated = false
-    let count = 0
-    while (this.queue.size > 0) {
-      const next = this.queue.peek()!
-      if (next.time > limit) break
-      if (count >= MAX_EVENTS_PER_RUN) {
-        this.haltOscillation()
-        return
-      }
-      const ev = this.queue.pop()!
-      count++
-      this.time = ev.time
-      this.dispatch(ev)
-    }
-    this.time = Number.isFinite(limit) ? Math.max(this.time, limit) : this.time
-  }
-
-  private haltOscillation(): void {
-    const affected = new Set<string>()
-    for (const ev of this.queue.values()) {
-      if (ev.kind === 'drive' || ev.kind === 'busdrive') {
-        const netId = this.graph.pinToNet.get(ev.pinId)
-        if (netId !== undefined) affected.add(netId)
-      } else if (ev.kind === 'eval') {
-        const comp = this.graph.components.get(ev.componentId)
-        if (comp) for (const out of comp.outputPinNames) affected.add(comp.pinNet[out])
-      }
-    }
-    for (const netId of affected) {
-      const net = this.graph.nets.get(netId)
-      if (net && net.width > 1) this.busValue.set(netId, xVec(net.width))
-      else this.netValue.set(netId, X)
-    }
-    this.queue.clear()
-    this.oscillated = true
-  }
-
-  private applyDrive(ev: Extract<SimEvent, { kind: 'drive' }>): void {
-    if (this.pinDrive.get(ev.pinId) === ev.value) return
-    this.pinDrive.set(ev.pinId, ev.value)
-    const netId = this.graph.pinToNet.get(ev.pinId)
-    if (netId === undefined) return
-    const net = this.graph.nets.get(netId)
-    if (!net) return
-    const resolved = this.resolveNet(net)
-    if (this.netValue.get(netId) === resolved) return
-    this.netValue.set(netId, resolved)
-    const probes = this.probeNets.get(netId)
-    if (probes) {
-      for (const id of probes) this.waveforms.get(id)?.push({ t: ev.time, v: resolved })
-    }
-    for (const readerId of this.graph.readers.get(netId) ?? []) {
-      this.enqueueEval(ev.time, readerId)
-    }
-  }
-
-  private applyEval(ev: Extract<SimEvent, { kind: 'eval' }>): void {
-    const comp = this.graph.components.get(ev.componentId)
-    if (!comp) return
-    const t = ev.time
-
-    if (comp.type === ComponentType.SWITCH) {
-      this.scheduleOutput(comp, 'out', this.switchValues[comp.id] ?? ZERO, t)
-      return
-    }
-    if (
-      CONSTANT_SOURCES.has(comp.type) ||
-      comp.type === ComponentType.CLOCK ||
-      comp.type === ComponentType.INPUT_SIGNAL ||
-      comp.type === ComponentType.PROBE ||
-      comp.type === ComponentType.SEVEN_SEGMENT ||
-      comp.type === ComponentType.BUS_INPUT ||
-      comp.type === ComponentType.BUS_PROBE ||
-      comp.type === ComponentType.CHECKER
-    ) {
-      return
-    }
-
-    if (isFlipFlop(comp.type)) {
-      this.evalFlipFlop(comp, t)
-      return
-    }
-    if (comp.type === ComponentType.STATE_MACHINE) {
-      this.evalStateMachine(comp, t)
-      return
-    }
-    if (CLOCKED_NBIT.has(comp.type)) {
-      this.evalClockedNBit(comp, t)
-      return
-    }
-
-    const family = gateFamily(comp.type)
-    if (family) {
-      const inputs = comp.inputPinNames.map((name) => this.readNet(comp.pinNet[name]))
-      this.scheduleOutput(comp, 'out', evalGate(family, inputs), t)
-      return
-    }
-
-    this.evalCombinational(comp, t)
-  }
-
-  private evalCombinational(comp: SimComponent, t: number): void {
-    switch (comp.type) {
-      case ComponentType.FULL_ADDER: {
-        const x = this.readPin(comp, 'X')
-        const y = this.readPin(comp, 'Y')
-        const cin = this.readPin(comp, 'Cin')
-        if (clean(x) && clean(y) && clean(cin)) {
-          const total = (x === ONE ? 1 : 0) + (y === ONE ? 1 : 0) + (cin === ONE ? 1 : 0)
-          this.scheduleOutput(comp, 'Sum', total % 2 ? ONE : ZERO, t)
-          this.scheduleOutput(comp, 'Cout', total >= 2 ? ONE : ZERO, t)
-        } else {
-          this.scheduleOutput(comp, 'Sum', X, t)
-          this.scheduleOutput(comp, 'Cout', X, t)
-        }
-        return
-      }
-
-      case ComponentType.DECODER_2TO4:
-      case ComponentType.DECODER_3TO8: {
-        const selects = comp.type === ComponentType.DECODER_2TO4 ? ['A', 'B'] : ['A', 'B', 'C']
-        const outputs = 1 << selects.length
-        const vals = selects.map((s) => this.readPin(comp, s))
-        if (vals.every(clean)) {
-          let index = 0
-          for (const v of vals) index = index * 2 + (v === ONE ? 1 : 0)
-          for (let i = 0; i < outputs; i++) {
-            this.scheduleOutput(comp, `out${i}`, i === index ? ONE : ZERO, t)
-          }
-        } else {
-          for (let i = 0; i < outputs; i++) this.scheduleOutput(comp, `out${i}`, X, t)
-        }
-        return
-      }
-
-      case ComponentType.MUX_2:
-      case ComponentType.MUX_4:
-      case ComponentType.MUX_8: {
-        const selects =
-          comp.type === ComponentType.MUX_2 ? ['A'] : comp.type === ComponentType.MUX_4 ? ['A', 'B'] : ['A', 'B', 'C']
-        const vals = selects.map((s) => this.readPin(comp, s))
-        if (vals.every(clean)) {
-          let index = 0
-          for (const v of vals) index = index * 2 + (v === ONE ? 1 : 0)
-          const input = this.readPin(comp, `in${index}`)
-          this.scheduleOutput(comp, 'Z', clean(input) ? input : X, t)
-        } else {
-          this.scheduleOutput(comp, 'Z', X, t)
-        }
-        return
-      }
-
-      case ComponentType.TRISTATE_RIGHT:
-      case ComponentType.TRISTATE_LEFT:
-      case ComponentType.TRISTATE_UP:
-      case ComponentType.TRISTATE_DOWN: {
-        const ctl = this.readPin(comp, 'ctl')
-        const input = this.readPin(comp, 'in')
-        const out = ctl === ZERO ? Z : ctl === ONE ? (clean(input) ? input : X) : X
-        this.scheduleOutput(comp, 'out', out, t)
-        return
-      }
-
-      case ComponentType.N_ADDER: {
-        const n = comp.bits
-        const x = this.readVec(comp, 'X', n)
-        const y = this.readVec(comp, 'Y', n)
-        const cin = this.readPin(comp, 'Cin')
-        const xn = vecToNum(x)
-        const yn = vecToNum(y)
-        if (xn !== null && yn !== null && clean(cin)) {
-          const total = xn + yn + (cin === ONE ? 1 : 0)
-          this.scheduleVec(comp, 'S', numToVec(total, n), t)
-          this.scheduleOutput(comp, 'Cout', total >> n ? ONE : ZERO, t)
-        } else {
-          this.scheduleVec(comp, 'S', xVec(n), t)
-          this.scheduleOutput(comp, 'Cout', X, t)
-        }
-        return
-      }
-
-      case ComponentType.N_MUX_2TO1: {
-        const n = comp.bits
-        const s = this.readPin(comp, 'S')
-        if (clean(s)) {
-          const vec = this.readVec(comp, s === ZERO ? 'X' : 'Y', n)
-          this.scheduleVec(comp, 'Z', vec.map((v) => (clean(v) ? v : X)), t)
-        } else {
-          this.scheduleVec(comp, 'Z', xVec(n), t)
-        }
-        return
-      }
-
-      case ComponentType.N_TRISTATE: {
-        const n = comp.bits
-        const ctl = this.readPin(comp, 'ctl')
-        if (ctl === ZERO) {
-          this.scheduleVec(comp, 'out', zVec(n), t)
-        } else if (ctl === ONE) {
-          const vec = this.readVec(comp, 'in', n)
-          this.scheduleVec(comp, 'out', vec.map((v) => (clean(v) ? v : X)), t)
-        } else {
-          this.scheduleVec(comp, 'out', xVec(n), t)
-        }
-        return
-      }
-
-      case ComponentType.SPLITTER: {
-        const vec = this.readBus(comp, 'in', comp.bits)
-        this.scheduleVec(comp, 'out', vec, t)
-        return
-      }
-
-      case ComponentType.MERGER: {
-        this.scheduleBusOutput(comp, 'out', this.readVec(comp, 'in', comp.bits), t)
-        return
-      }
-
-      case ComponentType.BUS_TAP: {
-        const netId = comp.pinNet['in']
-        const width = netId !== undefined ? (this.graph.nets.get(netId)?.width ?? 1) : 1
-        const vec = this.readBus(comp, 'in', width)
-        const slice: LogicValue[] = []
-        for (let i = 0; i < comp.bits; i++) {
-          const idx = comp.tapStart + i
-          slice.push(idx < vec.length ? vec[idx] : X)
-        }
-        if (comp.bits === 1) this.scheduleOutput(comp, 'out', slice[0], t)
-        else this.scheduleBusOutput(comp, 'out', slice, t)
-        return
-      }
-
-      case ComponentType.COMPLEMENTER: {
-        const n = comp.bits
-        const en = this.readPin(comp, 'en')
-        const vec = this.readBus(comp, 'in', n)
-        if (en === ONE) {
-          this.scheduleBusOutput(comp, 'out', vec.map((v) => (clean(v) ? (v === ONE ? ZERO : ONE) : X)), t)
-        } else if (en === ZERO) {
-          this.scheduleBusOutput(comp, 'out', vec, t)
-        } else {
-          this.scheduleBusOutput(comp, 'out', xVec(n), t)
-        }
-        return
-      }
-
-      default:
-        return
-    }
-  }
-
-  private evalClockedNBit(comp: SimComponent, t: number): void {
-    const n = comp.bits
-    const reg = this.regState.get(comp.id) ?? { state: xVec(n), lastClk: Z }
-    const clk = this.readPin(comp, 'CLK')
-    const rising = reg.lastClk === ZERO && clk === ONE
-    reg.lastClk = clk
-
-    if (rising) {
-      reg.state = this.nextRegState(comp, reg.state)
-    }
-    this.regState.set(comp.id, reg)
-
-    this.scheduleVec(comp, 'Q', reg.state, t)
-    if (comp.type === ComponentType.N_COUNTER || comp.type === ComponentType.N_LOADABLE_COUNTER) {
-      const num = vecToNum(reg.state)
-      const k = num === null ? X : num === (1 << n) - 1 ? ONE : ZERO
-      this.scheduleOutput(comp, 'K', k, t)
-    }
-  }
-
-  private nextRegState(comp: SimComponent, state: LogicValue[]): LogicValue[] {
-    const n = comp.bits
-    const pin = (name: string): LogicValue => this.readPin(comp, name)
-
-    switch (comp.type) {
-      case ComponentType.N_COUNTER: {
-        const clr = pin('CLR') // active low
-        const en = pin('En')
-        if (!clean(clr)) return xVec(n)
-        if (clr === ZERO) return numToVec(0, n)
-        if (!clean(en)) return xVec(n)
-        if (en === ZERO) return state
-        const num = vecToNum(state)
-        return num === null ? xVec(n) : numToVec(num + 1, n)
-      }
-
-      case ComponentType.N_LOADABLE_COUNTER: {
-        const clr = pin('CLR') // active low
-        const ld = pin('Ld') // active low
-        const en = pin('En')
-        if (!clean(clr)) return xVec(n)
-        if (clr === ZERO) return numToVec(0, n)
-        if (!clean(ld)) return xVec(n)
-        if (ld === ZERO) return this.readVec(comp, 'D', n).map((v) => (clean(v) ? v : X))
-        if (!clean(en)) return xVec(n)
-        if (en === ZERO) return state
-        const num = vecToNum(state)
-        return num === null ? xVec(n) : numToVec(num + 1, n)
-      }
-
-      case ComponentType.N_REGISTER: {
-        const clr = pin('CLR') // active high
-        const ld = pin('Ld')
-        if (!clean(clr)) return xVec(n)
-        if (clr === ONE) return numToVec(0, n)
-        if (!clean(ld)) return xVec(n)
-        if (ld === ONE) return this.readVec(comp, 'D', n).map((v) => (clean(v) ? v : X))
-        return state
-      }
-
-      case ComponentType.N_SHIFT_LEFT:
-      case ComponentType.N_SHIFT_RIGHT:
-      case ComponentType.N_SHIFT_BIDIR: {
-        const clr = pin('CLR')
-        const ld = pin('Ld')
-        if (!clean(clr)) return xVec(n)
-        if (clr === ONE) return numToVec(0, n)
-        if (!clean(ld)) return xVec(n)
-        if (ld === ONE) return this.readVec(comp, 'D', n).map((v) => (clean(v) ? v : X))
-
-        const canLeft = comp.type !== ComponentType.N_SHIFT_RIGHT
-        const canRight = comp.type !== ComponentType.N_SHIFT_LEFT
-        const ls = canLeft ? pin('LS') : ZERO
-        const rs = canRight ? pin('RS') : ZERO
-        if ((canLeft && !clean(ls)) || (canRight && !clean(rs))) return xVec(n)
-
-        // LS wins when both are asserted (bidirectional rule).
-        if (canLeft && ls === ONE) {
-          const rin = pin('Rin')
-          const next = xVec(n)
-          for (let i = n - 1; i > 0; i--) next[i] = state[i - 1]
-          next[0] = clean(rin) ? rin : X
-          return next
-        }
-        if (canRight && rs === ONE) {
-          const lin = pin('Lin')
-          const next = xVec(n)
-          for (let i = 0; i < n - 1; i++) next[i] = state[i + 1]
-          next[n - 1] = clean(lin) ? lin : X
-          return next
-        }
-        return state
-      }
-
-      default:
-        return state
-    }
-  }
-
-  /** Outputs follow the active row immediately; state advances on rising CLK. */
-  private evalStateMachine(comp: SimComponent, t: number): void {
-    const rows = this.smTables.get(comp.id) ?? []
-    const sm = this.smState.get(comp.id) ?? { state: null, lastClk: Z }
-    const clk = this.readPin(comp, 'CLK')
-    const rising = sm.lastClk === ZERO && clk === ONE
-    sm.lastClk = clk
-
-    const readPin = (pinName: string): LogicValue => this.readPin(comp, pinName)
-    const findActive = (): CompiledSmRow | null | undefined => {
-      // undefined = no row matches; null = inputs unresolved (X/Z).
-      if (sm.state === null) return undefined
-      let sawUnresolved = false
-      for (const row of rows) {
-        if (row.present !== sm.state) continue
-        const match = termsMatch(row.terms, readPin)
-        if (match === true) return row
-        if (match === null) sawUnresolved = true
-      }
-      return sawUnresolved ? null : undefined
-    }
-
-    let active = findActive()
-    if (rising && active) {
-      sm.state = active.next
-      active = findActive()
-    }
-    this.smState.set(comp.id, sm)
-    this.smActive.set(comp.id, active ? active.index : null)
-
-    for (const out of comp.outputPinNames) {
-      const value = active ? (active.highOutputs.includes(out) ? ONE : ZERO) : X
-      this.scheduleOutput(comp, out, value, t)
-    }
-  }
-
+  /** Text shown inside parts: the state machine's state and the checker's verdict. */
   getSmDisplays(): Record<PinId, string> {
     const out: Record<PinId, string> = {}
-    for (const [compId, sm] of this.smState) {
-      out[makePinId(compId, 'state')] = sm.state === null ? '?' : String(sm.state)
-    }
+    for (const [compId, sm] of this.smState) out[makePinId(compId, 'state')] = String(sm.state)
     const chk = this.getCheckerResult()
     if (chk && this.checker) {
       out[makePinId(this.checker.compId, 'result')] =
@@ -958,25 +435,477 @@ export class Simulator {
     return out
   }
 
-  private evalFlipFlop(comp: SimComponent, time: number): void {
+  // ---------------------------------------------------------------- clock / stimulus
+
+  /**
+   * Time of the k-th clock toggle. Toggles alternate floor/ceil of a half period
+   * so active edges (even k) land on exact multiples of the period even when the
+   * period is odd.
+   */
+  private clockToggleTime(k: number): number {
+    return Math.floor((k * this.period) / 2)
+  }
+
+  /**
+   * Largest time <= `t` that is a quarter period before an active clock edge
+   * (edges sit on multiples of the period), or `t` itself when none lies after `now`.
+   */
+  private quarterBeforeEdge(t: number, now: number): number {
+    const aligned = Math.floor((t + this.quarter) / this.period) * this.period - this.quarter
+    return aligned > now ? aligned : t
+  }
+
+  /**
+   * Queues clock toggles, input-signal rows and checker slots in (from, target].
+   * Stimulus never runs in LIVE mode, so nothing is queued at or before the
+   * current time: a clock left idle while switches were toggled resumes on its
+   * absolute grid from the next toggle after `now`, never replaying the past.
+   */
+  private scheduleStimulus(target: number): void {
+    const from = Math.max(this.scheduledUpTo, this.time)
+    if (target <= from) return
+
+    if (this.clockPinId !== null) {
+      const initial = this.options.clockInitialValue
+      let k = Math.max(1, Math.floor((2 * from) / this.period))
+      while (this.clockToggleTime(k) <= from) k++
+      for (; this.clockToggleTime(k) <= target; k++) {
+        this.push(this.clockToggleTime(k), {
+          kind: 'drive',
+          pinId: this.clockPinId,
+          value: k % 2 === 1 ? complement(initial) : initial
+        })
+      }
+    }
+
+    for (const src of this.inputs) {
+      if (src.rows.length === 0) continue
+      const drive = (at: number, value: LogicValue): void => {
+        if (at > from && at <= target) this.push(at, { kind: 'drive', pinId: src.pinId, value })
+      }
+      if (src.cycleNs > 0) {
+        const restartsCycle = src.rows[0].timeNs !== 0
+        for (let cycle = Math.floor(from / src.cycleNs); cycle * src.cycleNs <= target; cycle++) {
+          const base = cycle * src.cycleNs
+          // Each repeat starts from the waveform's t=0 value (Z when no row is at 0).
+          if (restartsCycle) drive(base, src.initial)
+          for (const row of src.rows) drive(base + row.timeNs, row.value as LogicValue)
+        }
+      } else {
+        for (const row of src.rows) drive(row.timeNs, row.value as LogicValue)
+      }
+    }
+
+    // Checker slot k occupies [k*period, (k+1)*period). Its input value is applied
+    // a quarter period into the slot (just after the active clock edge that starts
+    // it, so the circuit under test samples it at the NEXT edge, like a testbench)
+    // and the output is compared a quarter period before the slot ends. Slot 0's
+    // value is already present from reset().
+    if (this.checker) {
+      const { input, output, outPinId } = this.checker
+      for (let slot = 0; slot < input.length; slot++) {
+        const driveAt = slot * this.period + (slot === 0 ? 0 : this.quarter)
+        const sampleAt = (slot + 1) * this.period - this.quarter
+        if (driveAt > from && driveAt <= target) {
+          this.push(driveAt, { kind: 'drive', pinId: outPinId, value: checkerDrive(input[slot]) })
+          if (input[slot] === 'R') this.push(driveAt, { kind: 'softreset' })
+        }
+        if (sampleAt > from && sampleAt <= target && (output[slot] === '0' || output[slot] === '1')) {
+          this.push(sampleAt, { kind: 'sample', slot })
+        }
+      }
+    }
+
+    this.scheduledUpTo = target
+  }
+
+  private push(time: number, ev: EventBody): void {
+    this.queue.push({ ...ev, time, seq: this.seq++ } as SimEvent)
+  }
+
+  // ---------------------------------------------------------------- sequential state
+
+  /** Default state of a clocked part: unknown, with the clock level it currently sees. */
+  private seedSequentialState(comp: SimComponent, lastClk: LogicValue): void {
+    if (isFlipFlop(comp.type)) {
+      this.ffState.set(comp.id, { q: X, lastClk })
+    } else if (CLOCKED_NBIT.has(comp.type)) {
+      this.regState.set(comp.id, { state: xVec(comp.bits), lastClk })
+    } else if (comp.type === ComponentType.STATE_MACHINE) {
+      this.smState.set(comp.id, { state: initialSmState(this.smTables.get(comp.id) ?? []), lastClk })
+    }
+  }
+
+  /** Checker 'R': clear all sequential state without disturbing time or waveforms. */
+  private softReset(): void {
+    for (const comp of this.graph.components.values()) {
+      const last = this.ffState.get(comp.id) ?? this.regState.get(comp.id) ?? this.smState.get(comp.id)
+      if (!last) continue
+      this.seedSequentialState(comp, last.lastClk)
+      this.enqueueEval(comp.id)
+    }
+  }
+
+  private sampleChecker(slot: number): void {
+    if (!this.checker) return
+    const comp = this.graph.components.get(this.checker.compId)
+    if (!comp) return
+    const actual = this.readPin(comp, 'in')
+    const expected = this.checker.output[slot]
+    this.checkerSampled++
+    const matches = (expected === '0' && actual === ZERO) || (expected === '1' && actual === ONE)
+    if (!matches) this.checkerFailures.push({ slot, expected, actual })
+  }
+
+  // ---------------------------------------------------------------- nets
+
+  private widthOf(netId: string): number {
+    return this.graph.nets.get(netId)?.width ?? 1
+  }
+
+  /**
+   * Wired resolution of every output on the net: Z drivers release it, agreeing
+   * drivers keep their value, and disagreement (or an X driver) is X. An output
+   * that has never been evaluated drives X.
+   */
+  private resolveNet(net: SimNet): LogicValue {
+    let value = Z
+    for (const pinId of net.driverPinIds) value = resolveDrivers(value, this.drives.current.get(pinId) ?? X)
+    return value
+  }
+
+  /** Bus nets resolve bit by bit; a driver narrower than the net leaves its missing high bits X. */
+  private resolveBusNet(net: SimNet): LogicValue[] {
+    const result = zVec(net.width)
+    for (const pinId of net.driverPinIds) {
+      const drive = this.busDrives.current.get(pinId)
+      if (!drive) continue
+      for (let i = 0; i < net.width; i++) {
+        result[i] = resolveDrivers(result[i], i < drive.length ? drive[i] : X)
+      }
+    }
+    return result
+  }
+
+  private sampleOf(netId: string): WaveformSample {
+    if (this.widthOf(netId) > 1) {
+      return { t: this.time, v: X, hex: vecToHex(this.busValue.get(netId) ?? xVec(this.widthOf(netId))) }
+    }
+    return { t: this.time, v: this.readNet(netId) }
+  }
+
+  /**
+   * Re-resolves every net whose drivers changed during the current instant.
+   * Resolving once per instant (not once per driver event) means probes record
+   * at most one sample per instant and readers see only the final value.
+   */
+  private commitNets(): void {
+    for (const netId of this.dirtyNets) {
+      const net = this.graph.nets.get(netId)
+      if (!net) continue
+      let changed: boolean
+      if (net.width > 1) {
+        const resolved = this.resolveBusNet(net)
+        changed = !vecEqual(this.busValue.get(netId), resolved)
+        if (changed) this.busValue.set(netId, resolved)
+      } else {
+        const resolved = this.resolveNet(net)
+        changed = this.netValue.get(netId) !== resolved
+        if (changed) this.netValue.set(netId, resolved)
+      }
+      if (!changed) continue
+      const probes = this.probeNets.get(netId)
+      if (probes) {
+        const sample = this.sampleOf(netId)
+        for (const id of probes) this.waveforms.get(id)?.push(sample)
+      }
+      for (const readerId of this.graph.readers.get(netId) ?? []) this.enqueueEval(readerId)
+    }
+    this.dirtyNets.clear()
+  }
+
+  private readNet(netId: string | undefined): LogicValue {
+    if (netId === undefined) return Z
+    return this.netValue.get(netId) ?? Z
+  }
+
+  private readPin(comp: SimComponent, name: string): LogicValue {
+    return this.readNet(comp.pinNet[name])
+  }
+
+  private readVec(comp: SimComponent, prefix: string, n: number): LogicValue[] {
+    const vec: LogicValue[] = []
+    for (let i = 0; i < n; i++) vec.push(this.readPin(comp, `${prefix}${i}`))
+    return vec
+  }
+
+  /** The vector on a bus pin's net, or null when nothing drives that net (unconnected). */
+  private readBusOrNull(comp: SimComponent, pinName: string): LogicValue[] | null {
+    const netId = comp.pinNet[pinName]
+    const net = netId === undefined ? undefined : this.graph.nets.get(netId)
+    if (!net || net.driverPinIds.length === 0) return null
+    if (net.width === 1) return [this.readNet(net.id)]
+    return (this.busValue.get(net.id) ?? zVec(net.width)).slice()
+  }
+
+  /** The vector on a bus pin as an n-bit part sees it (unconnected -> Z, mismatch -> X fill). */
+  private readBus(comp: SimComponent, pinName: string, n: number): LogicValue[] {
+    const vec = this.readBusOrNull(comp, pinName)
+    if (vec === null) return zVec(n)
+    return vec.length === n ? vec : fitVec(vec, n)
+  }
+
+  // ---------------------------------------------------------------- event loop
+
+  /** Marks a component for re-evaluation at the current time (deduplicated). */
+  private enqueueEval(componentId: string): void {
+    if (this.evalQueued.has(componentId)) return
+    this.evalQueued.add(componentId)
+    this.evalQueue.push(componentId)
+  }
+
+  /** Evaluates every queued component now. Evaluations only queue future changes, so this terminates. */
+  private flushEvals(): void {
+    while (this.evalQueue.length > 0) {
+      const id = this.evalQueue.shift()!
+      this.evalQueued.delete(id)
+      this.applyEval(id)
+    }
+  }
+
+  /**
+   * Applies a batch of events that all carry the current time, then resolves the
+   * nets they touched, takes the checker samples and evaluates affected parts.
+   */
+  private applyInstant(events: SimEvent[]): void {
+    const samples: number[] = []
+    for (const ev of events) {
+      if (ev.kind === 'drive') {
+        if (this.drives.apply(ev.pinId, ev.value, ev.version)) this.markDirty(ev.pinId)
+      } else if (ev.kind === 'busdrive') {
+        if (this.busDrives.apply(ev.pinId, ev.value, ev.version)) this.markDirty(ev.pinId)
+      } else if (ev.kind === 'softreset') {
+        this.softReset()
+      } else {
+        samples.push(ev.slot)
+      }
+    }
+    this.commitNets()
+    for (const slot of samples) this.sampleChecker(slot)
+    this.flushEvals()
+  }
+
+  private markDirty(pinId: PinId): void {
+    const netId = this.graph.pinToNet.get(pinId)
+    if (netId !== undefined) this.dirtyNets.add(netId)
+  }
+
+  /** Runs queued events up to and including `limit`; time ends at `limit` when finite. */
+  private process(limit: number): void {
+    this.oscillated = false
+    let count = 0
+    this.flushEvals()
+    while (this.queue.size > 0) {
+      const t = this.queue.peek()!.time
+      if (t > limit) break
+      this.time = t
+      const batch: SimEvent[] = []
+      while (this.queue.size > 0 && this.queue.peek()!.time === t) {
+        if (++count > MAX_EVENTS_PER_RUN) {
+          this.haltOscillation()
+          return
+        }
+        batch.push(this.queue.pop()!)
+      }
+      this.applyInstant(batch)
+    }
+    if (Number.isFinite(limit)) this.time = Math.max(this.time, limit)
+  }
+
+  /** Event-limit hit: mark every net still changing as X and drop the queue. */
+  private haltOscillation(): void {
+    for (const ev of this.queue.values()) {
+      if (ev.kind !== 'drive' && ev.kind !== 'busdrive') continue
+      const netId = this.graph.pinToNet.get(ev.pinId)
+      if (netId === undefined) continue
+      const width = this.widthOf(netId)
+      if (width > 1) this.busValue.set(netId, xVec(width))
+      else this.netValue.set(netId, X)
+    }
+    this.queue.clear()
+    this.drives.clearPending()
+    this.busDrives.clearPending()
+    this.dirtyNets.clear()
+    this.evalQueue = []
+    this.evalQueued.clear()
+    this.oscillated = true
+  }
+
+  // ---------------------------------------------------------------- outputs
+
+  /** Queues a single-bit output change `delay` after now (inertial; see DriveChannel.plan). */
+  private scheduleOutput(comp: SimComponent, pinName: string, value: LogicValue): void {
+    if (!(pinName in comp.pinNet)) return
+    const pinId = makePinId(comp.id, pinName)
+    const version = this.drives.plan(pinId, value)
+    if (version !== null) this.push(this.time + comp.delay, { kind: 'drive', pinId, value, version })
+  }
+
+  private scheduleBusOutput(comp: SimComponent, pinName: string, value: LogicValue[]): void {
+    if (!(pinName in comp.pinNet)) return
+    const pinId = makePinId(comp.id, pinName)
+    const version = this.busDrives.plan(pinId, value)
+    if (version !== null) this.push(this.time + comp.delay, { kind: 'busdrive', pinId, value, version })
+  }
+
+  private scheduleVec(comp: SimComponent, prefix: string, values: LogicValue[]): void {
+    for (let i = 0; i < values.length; i++) this.scheduleOutput(comp, `${prefix}${i}`, values[i])
+  }
+
+  // ---------------------------------------------------------------- part evaluation
+
+  private applyEval(componentId: string): void {
+    const comp = this.graph.components.get(componentId)
+    if (!comp || PASSIVE.has(comp.type)) return
+
+    if (comp.type === ComponentType.SWITCH) {
+      this.scheduleOutput(comp, 'out', this.switchValues[comp.id] ?? ZERO)
+      return
+    }
+    if (isFlipFlop(comp.type)) return this.evalFlipFlop(comp)
+    if (comp.type === ComponentType.STATE_MACHINE) return this.evalStateMachine(comp)
+    if (CLOCKED_NBIT.has(comp.type)) return this.evalClockedNBit(comp)
+
+    const family = gateFamily(comp.type)
+    if (family) {
+      this.scheduleOutput(comp, 'out', evalGate(family, comp.inputPinNames.map((name) => this.readPin(comp, name))))
+      return
+    }
+    this.evalCombinational(comp)
+  }
+
+  private evalCombinational(comp: SimComponent): void {
+    const n = comp.bits
+    const pin = (name: string): LogicValue => this.readPin(comp, name)
+
+    if (TRISTATES.has(comp.type)) {
+      this.scheduleOutput(comp, 'out', evalTristate(pin('ctl'), [pin('in')])[0])
+      return
+    }
+
+    switch (comp.type) {
+      case ComponentType.FULL_ADDER: {
+        const { sum, cout } = evalAdder([pin('X')], [pin('Y')], pin('Cin'))
+        this.scheduleOutput(comp, 'Sum', sum[0])
+        this.scheduleOutput(comp, 'Cout', cout)
+        return
+      }
+      case ComponentType.DECODER_2TO4:
+      case ComponentType.DECODER_3TO8:
+        this.scheduleVec(comp, 'out', evalDecoder(selectPinsOf(comp.type).map(pin)))
+        return
+      case ComponentType.MUX_2:
+      case ComponentType.MUX_4:
+      case ComponentType.MUX_8:
+        this.scheduleOutput(comp, 'Z', evalMux(selectPinsOf(comp.type).map(pin), (i) => pin(`in${i}`)))
+        return
+      case ComponentType.N_ADDER: {
+        const { sum, cout } = evalAdder(this.readVec(comp, 'X', n), this.readVec(comp, 'Y', n), pin('Cin'))
+        this.scheduleVec(comp, 'S', sum)
+        this.scheduleOutput(comp, 'Cout', cout)
+        return
+      }
+      case ComponentType.N_MUX_2TO1:
+        this.scheduleVec(comp, 'Z', evalMux2to1(pin('S'), this.readVec(comp, 'X', n), this.readVec(comp, 'Y', n)))
+        return
+      case ComponentType.N_TRISTATE:
+        this.scheduleVec(comp, 'out', evalTristate(pin('ctl'), this.readVec(comp, 'in', n)))
+        return
+      case ComponentType.SPLITTER:
+        this.scheduleVec(comp, 'out', this.readBus(comp, 'in', n))
+        return
+      case ComponentType.MERGER:
+        this.scheduleBusOutput(comp, 'out', this.readVec(comp, 'in', n))
+        return
+      case ComponentType.COMPLEMENTER:
+        this.scheduleBusOutput(comp, 'out', evalComplementer(pin('en'), this.readBus(comp, 'in', n)))
+        return
+      case ComponentType.BUS_TAP: {
+        const slice = evalBusTap(this.readBusOrNull(comp, 'in'), comp.tapStart, n)
+        if (n === 1) this.scheduleOutput(comp, 'out', slice[0])
+        else this.scheduleBusOutput(comp, 'out', slice)
+        return
+      }
+      default:
+        return
+    }
+  }
+
+  private evalFlipFlop(comp: SimComponent): void {
     const kind: FlipFlopKind = comp.type === ComponentType.D_FLIPFLOP ? 'd' : 'jk'
-    const clk = this.readNet(comp.pinNet['CLK'])
-    const state = this.ffState.get(comp.id) ?? { q: X, lastClk: clk }
+    const pin = (name: string): LogicValue => this.readPin(comp, name)
+    const clk = pin('CLK')
+    const state = this.ffState.get(comp.id)!
     const q = nextFlipFlopQ(
       kind,
-      {
-        clk,
-        s: this.readNet(comp.pinNet['S']),
-        r: this.readNet(comp.pinNet['R']),
-        d: this.readNet(comp.pinNet['D']),
-        j: this.readNet(comp.pinNet['J']),
-        k: this.readNet(comp.pinNet['K'])
-      },
+      { clk, s: pin('S'), r: pin('R'), d: pin('D'), j: pin('J'), k: pin('K') },
       state.q,
       state.lastClk
     )
     this.ffState.set(comp.id, { q, lastClk: clk })
-    this.scheduleOutput(comp, 'Q', q, time)
-    this.scheduleOutput(comp, "Q'", complement(q), time)
+    this.scheduleOutput(comp, 'Q', q)
+    this.scheduleOutput(comp, "Q'", complement(q))
   }
+
+  /** Fully synchronous parts: state changes only on the rising edge; outputs follow the state. */
+  private evalClockedNBit(comp: SimComponent): void {
+    const reg = this.regState.get(comp.id)!
+    const clk = this.readPin(comp, 'CLK')
+    if (isRisingEdge(reg.lastClk, clk)) {
+      reg.state = nextRegisterState(
+        comp.type,
+        reg.state,
+        (name) => this.readPin(comp, name),
+        () => this.readVec(comp, 'D', comp.bits)
+      )
+    }
+    reg.lastClk = clk
+
+    this.scheduleVec(comp, 'Q', reg.state)
+    if (comp.type === ComponentType.N_COUNTER || comp.type === ComponentType.N_LOADABLE_COUNTER) {
+      this.scheduleOutput(comp, 'K', counterCarry(reg.state))
+    }
+  }
+
+  /** Mealy machine: outputs follow the active row immediately; the state advances on rising CLK. */
+  private evalStateMachine(comp: SimComponent): void {
+    const rows = this.smTables.get(comp.id) ?? []
+    const sm = this.smState.get(comp.id)!
+    const clk = this.readPin(comp, 'CLK')
+    const readPin = (name: string): LogicValue => this.readPin(comp, name)
+
+    let active = activeSmRow(rows, sm.state, readPin)
+    if (isRisingEdge(sm.lastClk, clk) && active) {
+      sm.state = active.next
+      active = activeSmRow(rows, sm.state, readPin)
+    }
+    sm.lastClk = clk
+    this.smActive.set(comp.id, active ? active.index : null)
+
+    for (const out of comp.outputPinNames) this.scheduleOutput(comp, out, smOutputValue(active, out))
+  }
+}
+
+/**
+ * 'R' at time T repeats the waveform from 0 with period T: rows at or after T
+ * can never be reached and are dropped. Negative times are ignored.
+ */
+function makeInputSource(pinId: PinId, signal: SignalRow[]): InputSource {
+  const sorted = [...signal].filter((r) => r.timeNs >= 0).sort((a, b) => a.timeNs - b.timeNs)
+  const repeat = sorted.find((r) => r.value === 'R' && r.timeNs > 0)
+  const cycleNs = repeat ? repeat.timeNs : 0
+  const rows = sorted.filter((r) => r.value !== 'R' && (cycleNs === 0 || r.timeNs < cycleNs))
+  const source: InputSource = { pinId, rows, cycleNs, initial: Z }
+  source.initial = inputValueAt(source, 0)
+  return source
 }

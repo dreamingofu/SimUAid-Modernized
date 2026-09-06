@@ -1,4 +1,7 @@
+// Gate and flip-flop truth functions (reference manual §1.9 and Appendix A).
+
 import { ComponentType, LogicValue } from '../model/types'
+import { clean, complement } from './values'
 
 const { ZERO, ONE, X } = LogicValue
 
@@ -30,12 +33,6 @@ export function gateFamily(type: ComponentType): GateFamily | null {
   return GATE_FAMILY[type] ?? null
 }
 
-function complement(v: LogicValue): LogicValue {
-  if (v === ZERO) return ONE
-  if (v === ONE) return ZERO
-  return X
-}
-
 // A controlling 0 forces AND to 0 even when other inputs are Z/X.
 function evalAnd(inputs: LogicValue[]): LogicValue {
   let allOne = true
@@ -59,7 +56,7 @@ function evalOr(inputs: LogicValue[]): LogicValue {
 function evalXor(inputs: LogicValue[]): LogicValue {
   let ones = 0
   for (const v of inputs) {
-    if (v !== ZERO && v !== ONE) return X
+    if (!clean(v)) return X
     if (v === ONE) ones++
   }
   return ones % 2 === 1 ? ONE : ZERO
@@ -84,6 +81,10 @@ export function evalGate(family: GateFamily, inputs: LogicValue[]): LogicValue {
   }
 }
 
+/** A clean 0 -> 1 transition. X/Z on either side is never an edge. */
+export const isRisingEdge = (prev: LogicValue, cur: LogicValue): boolean => prev === ZERO && cur === ONE
+export const isFallingEdge = (prev: LogicValue, cur: LogicValue): boolean => prev === ONE && cur === ZERO
+
 export type FlipFlopKind = 'd' | 'jk'
 
 export interface FlipFlopInputs {
@@ -95,13 +96,11 @@ export interface FlipFlopInputs {
   k?: LogicValue
 }
 
-const isClean = (v: LogicValue): boolean => v === ZERO || v === ONE
-
 /**
  * Resolves Q after applying asynchronous S/R (which override the clock) and, if
- * S/R are both inactive, the clocked behavior on the part's active edge.
- * Indeterminate control lines (Z/X on S or R) yield X — a flip-flop must have all
- * inputs driven.
+ * S/R are both inactive, the clocked behavior on the part's active edge (D:
+ * rising, JK: falling). Indeterminate control lines (Z/X on S or R) yield X — a
+ * flip-flop must have all inputs driven.
  */
 export function nextFlipFlopQ(
   kind: FlipFlopKind,
@@ -111,23 +110,21 @@ export function nextFlipFlopQ(
 ): LogicValue {
   const { clk, s, r } = inputs
 
-  if (!isClean(s) || !isClean(r)) return X
+  if (!clean(s) || !clean(r)) return X
   if (s === ZERO && r === ZERO) return X
   if (s === ZERO) return ONE
   if (r === ZERO) return ZERO
 
   if (kind === 'd') {
-    const rising = prevClk === ZERO && clk === ONE
-    if (!rising) return prevQ
+    if (!isRisingEdge(prevClk, clk)) return prevQ
     const d = inputs.d ?? LogicValue.Z
-    return isClean(d) ? d : X
+    return clean(d) ? d : X
   }
 
-  const falling = prevClk === ONE && clk === ZERO
-  if (!falling) return prevQ
+  if (!isFallingEdge(prevClk, clk)) return prevQ
   const j = inputs.j ?? LogicValue.Z
   const k = inputs.k ?? LogicValue.Z
-  if (!isClean(j) || !isClean(k)) return X
+  if (!clean(j) || !clean(k)) return X
   if (j === ONE && k === ONE) return complement(prevQ)
   if (j === ONE) return ONE
   if (k === ONE) return ZERO
