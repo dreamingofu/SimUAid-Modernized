@@ -19,7 +19,9 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "build:unpack": "electron-vite build && electron-builder --dir",
     "build:mac": "electron-vite build && electron-builder --mac",
-    "build:win": "electron-vite build && electron-builder --win"
+    "build:win": "electron-vite build && electron-builder --win",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "lucide-react": "^0.460.0",
@@ -36,7 +38,8 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^5.6.3",
-    "vite": "^8.1.2"
+    "vite": "^8.1.2",
+    "vitest": "^5.0.0"
   },
   "allowScripts": {
     "fsevents@2.3.3": true,
