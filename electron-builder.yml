@@ -19,16 +19,16 @@ mac:
     - target: dmg
       arch: [universal]
   category: public.app-category.education
-  # No Apple Developer ID yet. Once you have one:
-  #   1. Delete the `identity: null` line below (electron-builder will then
-  #      auto-detect your "Developer ID Application" cert from the keychain,
-  #      or from CSC_LINK/CSC_KEY_PASSWORD env vars in CI).
-  #   2. Uncomment hardenedRuntime + entitlements below.
-  #   3. Configure signing and notarization credentials in the build job.
-  identity: null
-  # hardenedRuntime: true
-  # entitlements: build/entitlements.mac.plist
-  # entitlementsInherit: build/entitlements.mac.plist
+  type: distribution
+  forceCodeSigning: true
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # CI notarizes the complete signed DMG, then staples and verifies its ticket.
+  notarize: false
+
+dmg:
+  sign: true
 
 win:
   target:
