@@ -70,7 +70,11 @@ jobs:
 
       - name: Notarize and verify macOS installer
         if: runner.os == 'macOS'
-        timeout-minutes: 35
+        # Apple's queue is normally under a minute but can occasionally run past
+        # 30 minutes under load; notarytool's own --wait timeout below is the
+        # actual budget, so keep this step timeout comfortably above it rather
+        # than racing it.
+        timeout-minutes: 65
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -80,11 +84,16 @@ jobs:
           dmg="dist/SimUaid-$(node -p 'require("./package.json").version')-mac-universal.dmg"
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign --verify --strict --verbose=2 "$dmg"
+          # notarytool prints the machine-readable result to stdout and progress/
+          # error messages (including the message it prints if --wait times out)
+          # to stderr; capture both so a timeout still leaves a submission ID to
+          # look up with `notarytool info`/`log` instead of an empty result file.
           xcrun notarytool submit "$dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait --timeout 30m --output-format json > notarization-result.json
+            --wait --timeout 60m --output-format json \
+            > notarization-result.json 2> notarization-log.txt
           node -e 'const result = require("./notarization-result.json"); if (result.status !== "Accepted") throw new Error("Apple notarization " + result.status + "; submission " + result.id)'
           xcrun stapler staple "$dmg"
           xcrun stapler validate "$dmg"
@@ -95,7 +104,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macOS-notarization-result
-          path: notarization-result.json
+          path: |
+            notarization-result.json
+            notarization-log.txt
           if-no-files-found: ignore
           retention-days: 14
 

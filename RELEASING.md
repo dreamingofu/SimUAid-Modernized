@@ -104,6 +104,20 @@ If Apple rejects a submission, inspect the `macOS-notarization-result` artifact
 for the submission ID and retrieve the detailed log using `xcrun notarytool log`
 with your notarization credentials. Do not publish a rejected build.
 
+If the step instead fails with a timeout (exit 124, "Timeout of N second(s) was
+reached before processing completed"), that is `notarytool --wait` giving up,
+not a rejection — Apple's queue is normally under a minute but occasionally
+runs long. The submission keeps processing on Apple's side regardless. Check
+`notarization-log.txt` in the same artifact for the submission ID and query it
+once it likely finished:
+
+```sh
+xcrun notarytool info <submission-id> --apple-id ... --password ... --team-id ...
+```
+
+If it shows `Accepted`, just re-run the workflow (or re-run only the failed
+job) — the timeout is not fatal, it costs a wasted signing pass.
+
 Version 0.1.1 was released unsigned and remains unchanged. Version 0.1.2 is prepared for
 the signed release; publish its tag only after the signing workflow passes.
 Existing downloads do not become signed automatically. A normal downloaded-app confirmation may still appear
