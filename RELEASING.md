@@ -4,8 +4,8 @@ Installers are written to `dist/`:
 
 | Platform | File |
 | --- | --- |
-| Windows x64 | `SimUaid-0.1.1-windows-x64-setup.exe` |
-| macOS Intel and Apple Silicon | `SimUaid-0.1.1-mac-universal.dmg` |
+| Windows x64 | `SimUaid-0.1.2-windows-x64-setup.exe` |
+| macOS Intel and Apple Silicon | `SimUaid-0.1.2-mac-universal.dmg` |
 
 The version in each filename comes from `package.json`.
 
@@ -35,11 +35,11 @@ branches do not create releases.
 ## Create a release
 
 1. Commit and push the source and release configuration you want to distribute.
-2. Create and push a tag matching `package.json` (currently `v0.1.1`):
+2. Create and push a tag matching `package.json` (currently `v0.1.2`):
 
    ```sh
-   git tag v0.1.1
-   git push origin v0.1.1
+   git tag v0.1.2
+   git push origin v0.1.2
    ```
 
 3. Wait for **Actions → Release** to finish. It tests and builds both platforms,
@@ -104,9 +104,9 @@ If Apple rejects a submission, inspect the `macOS-notarization-result` artifact
 for the submission ID and retrieve the detailed log using `xcrun notarytool log`
 with your notarization credentials. Do not publish a rejected build.
 
-Version 0.1.1 was released unsigned and remains unchanged. Once a signed build
-passes, bump the package version and publish a new tag; existing downloads do not
-become signed automatically. A normal downloaded-app confirmation may still appear
+Version 0.1.1 was released unsigned and remains unchanged. Version 0.1.2 is prepared for
+the signed release; publish its tag only after the signing workflow passes.
+Existing downloads do not become signed automatically. A normal downloaded-app confirmation may still appear
 for a notarized app.
 
 References: [Apple Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates),
