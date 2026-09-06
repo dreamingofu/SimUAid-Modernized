@@ -4,6 +4,7 @@
 // labels that are 1 ("0" = all outputs 0). Rows are matched in order.
 
 import { LogicValue, type Component, type SmRow } from '../model/types'
+import { smPinCounts } from '../model/partDefinitions'
 
 export interface SmTerm {
   pinName: string
@@ -42,8 +43,7 @@ export function smLabelMaps(comp: Component): {
 } {
   const inputs = new Map<string, string>()
   const outputs = new Map<string, string>()
-  const nIn = comp.smInputs ?? 0
-  const nOut = comp.smOutputs ?? 0
+  const { nIn, nOut } = smPinCounts(comp)
   for (let i = 1; i <= nIn; i++) {
     const label = comp.pinLabels[`in${i}`]
     if (label) inputs.set(label, `in${i}`)

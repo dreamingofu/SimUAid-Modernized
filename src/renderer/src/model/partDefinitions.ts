@@ -250,7 +250,9 @@ function nRegister(n: number): PartDefinition {
 
 function nShift(n: number, kind: 'left' | 'right' | 'bidir'): PartDefinition {
   const width = Math.max((n + 1) * PITCH, 140)
-  const height = 100
+  // Left-edge slots at 20-ns pitch: Ld, CLR, LS/Lin, (Lin), CLK. The bidirectional
+  // register carries both LS and Lin on the left, so it needs one more row.
+  const height = kind === 'bidir' ? 120 : 100
   const title = kind === 'left' ? `Left SR ${n}` : kind === 'right' ? `Right SR ${n}` : `Bidir SR ${n}`
   const pins: PinDef[] = [
     ...row('D', n, 'input', height),
@@ -265,7 +267,7 @@ function nShift(n: number, kind: 'left' | 'right' | 'bidir'): PartDefinition {
   }
   if (kind === 'right' || kind === 'bidir') {
     pins.push({ name: 'RS', role: 'input', dx: width, dy: 60 })
-    pins.push({ name: 'Lin', role: 'input', dx: kind === 'bidir' ? 0 : 0, dy: 80 })
+    pins.push({ name: 'Lin', role: 'input', dx: 0, dy: kind === 'bidir' ? 80 : 60 })
   }
   if (kind === 'right') {
     // Right SR keeps Ld/CLR on the right edge per the manual.
@@ -485,14 +487,24 @@ export function maxBitsFor(type: ComponentType): number {
   return isBusType(type) ? MAX_BUS_BITS : MAX_BITS
 }
 
+/**
+ * Data width actually used for a parameterized part: `bits` clamped to the type's
+ * range (defaulting to DEFAULT_BITS). 0 for fixed-width parts. The simulator and
+ * the pin geometry must agree on this, so both go through here.
+ */
+export function effectiveBits(type: ComponentType, bits: number | undefined): number {
+  if (!isNBitType(type) && !isBusType(type)) return 0
+  const minBits = type === ComponentType.BUS_TAP ? 1 : MIN_BITS
+  return Math.min(maxBitsFor(type), Math.max(minBits, bits ?? DEFAULT_BITS))
+}
+
 export function getPartDefinition(type: ComponentType, bits?: number): PartDefinition {
   if (type === ComponentType.STATE_MACHINE) {
     return defOf({ type, smInputs: undefined, smOutputs: undefined })
   }
   const builder = N_BIT_BUILDERS[type] ?? BUS_BUILDERS[type]
   if (builder) {
-    const minBits = type === ComponentType.BUS_TAP ? 1 : MIN_BITS
-    const n = Math.min(maxBitsFor(type), Math.max(minBits, bits ?? DEFAULT_BITS))
+    const n = effectiveBits(type, bits)
     const key = `${type}:${n}`
     let def = nBitCache.get(key)
     if (!def) {
@@ -504,10 +516,20 @@ export function getPartDefinition(type: ComponentType, bits?: number): PartDefin
   return FIXED[type]!
 }
 
+export const SM_MIN_PINS = 1
+export const SM_MAX_PINS = 8
+export const SM_DEFAULT_PINS = 4
+
+/** Effective input/output pin counts of a state machine (clamped, defaulted). */
+export function smPinCounts(c: Pick<Component, 'smInputs' | 'smOutputs'>): { nIn: number; nOut: number } {
+  const clamp = (n: number | undefined): number =>
+    Math.min(SM_MAX_PINS, Math.max(SM_MIN_PINS, n ?? SM_DEFAULT_PINS))
+  return { nIn: clamp(c.smInputs), nOut: clamp(c.smOutputs) }
+}
+
 export function defOf(c: Pick<Component, 'type' | 'bits' | 'smInputs' | 'smOutputs'>): PartDefinition {
   if (c.type === ComponentType.STATE_MACHINE) {
-    const nIn = Math.min(8, Math.max(1, c.smInputs ?? 4))
-    const nOut = Math.min(8, Math.max(1, c.smOutputs ?? 4))
+    const { nIn, nOut } = smPinCounts(c)
     const key = `SM:${nIn}:${nOut}`
     let def = nBitCache.get(key)
     if (!def) {
