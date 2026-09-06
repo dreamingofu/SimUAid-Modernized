@@ -130,7 +130,14 @@ export function findNetContaining(
   return null
 }
 
-/** Points where more than two wire endpoints/pins coincide (draw a junction dot). */
+/**
+ * Points where more than two wire endpoints/pins coincide (draw a junction dot),
+ * per the manual §1.2.4: "A dark filled circle (a dot) is drawn at intersections
+ * of more than two segments or pins to indicate a connection." A pin counts as
+ * one conductor, so a pin with two wires ending on it — and a wire corner that
+ * lands on an unrelated pin — are dotted; resolveNets() unions exactly the same
+ * coincident coordinates, so the drawing and the connectivity agree.
+ */
 export function junctionPoints(netlist: Netlist): Point[] {
   const counts = new Map<string, { p: Point; n: number }>()
   const bump = (p: Point): void => {
@@ -139,6 +146,7 @@ export function junctionPoints(netlist: Netlist): Point[] {
     if (entry) entry.n += 1
     else counts.set(key, { p, n: 1 })
   }
+  for (const pin of getAllPins(netlist)) bump(pin)
   for (const wire of netlist.wires) {
     const pts = segmentsToPoints(wire.segments)
     // Count every endpoint of every segment (interior points counted twice — once
