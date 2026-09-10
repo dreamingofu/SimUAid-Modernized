@@ -70,7 +70,8 @@ describe('circuit disk storage', () => {
     await writeFile(path, 'original')
     const identity = execFileSync('whoami.exe', { encoding: 'utf8' }).trim()
     try {
-      execFileSync('icacls.exe', [path, '/deny', `${identity}:(W)`])
+      // Deny data writes, leaving read/synchronize permissions intact.
+      execFileSync('icacls.exe', [path, '/deny', `${identity}:(WD,AD)`])
       await expect(writeDocument(path, 'changed')).rejects.toThrow()
       expect(await readFile(path, 'utf8')).toBe('original')
       expect(await readdir(dir)).toEqual(['restricted.ckt'])
