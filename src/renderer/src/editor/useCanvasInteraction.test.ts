@@ -11,9 +11,14 @@ vi.mock('react', async (importOriginal) => ({
 }))
 
 let handlers: Record<string, EventListener>
+let windowHandlers: Record<string, EventListener>
 beforeEach(() => {
   handlers = {}
-  vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  windowHandlers = {}
+  vi.stubGlobal('window', {
+    addEventListener: (name: string, handler: EventListener) => { windowHandlers[name] = handler },
+    removeEventListener: vi.fn()
+  })
   useCircuitStore.getState().newCircuit()
   useCircuitStore.getState().setViewport({ scale: 1, offsetX: 0, offsetY: 0 })
   const canvas = {
@@ -52,5 +57,40 @@ describe('configured part placement', () => {
     const def = defOf(placed)
     expect(Math.abs(placed.x + def.width / 2 - 400)).toBeLessThanOrEqual(5)
     expect(Math.abs(placed.y + def.height / 2 - 300)).toBeLessThanOrEqual(5)
+  })
+})
+
+describe('canvas keyboard focus', () => {
+  function selectedPart(): void {
+    useCircuitStore.getState().addComponent({
+      id: 'part', type: ComponentType.NOT, x: 100, y: 100,
+      rotation: 0, delay: 1, label: '', pinLabels: {}
+    })
+    useCircuitStore.getState().selectComponent('part')
+  }
+
+  it('does not nudge components behind a modal when a button has focus', () => {
+    selectedPart()
+    useCircuitStore.getState().openDialog({ kind: 'defaultDelay' })
+    windowHandlers.keydown({ key: 'ArrowRight', target: { tagName: 'BUTTON' }, preventDefault: vi.fn() } as unknown as KeyboardEvent)
+    expect(useCircuitStore.getState().netlist.components[0].x).toBe(100)
+    useCircuitStore.getState().closeDialog()
+    windowHandlers.keydown({ key: 'ArrowRight', target: { tagName: 'BODY' }, preventDefault: vi.fn() } as unknown as KeyboardEvent)
+    expect(useCircuitStore.getState().netlist.components[0].x).toBe(110)
+  })
+
+  it('leaves arrows to contenteditable text without moving the circuit', () => {
+    selectedPart()
+    windowHandlers.keydown({
+      key: 'ArrowRight', target: { tagName: 'DIV', isContentEditable: true }, preventDefault: vi.fn()
+    } as unknown as KeyboardEvent)
+    expect(useCircuitStore.getState().netlist.components[0].x).toBe(100)
+  })
+
+  it('allows canvas navigation with the floating state table open', () => {
+    selectedPart()
+    useCircuitStore.getState().setSmEditorOpen(true)
+    windowHandlers.keydown({ key: 'ArrowRight', target: { tagName: 'BODY' }, preventDefault: vi.fn() } as unknown as KeyboardEvent)
+    expect(useCircuitStore.getState().netlist.components[0].x).toBe(110)
   })
 })
