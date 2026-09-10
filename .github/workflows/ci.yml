@@ -34,4 +34,11 @@ jobs:
       - run: npm run build
       - name: Verify production content security policy
         shell: bash
-        run: node -e "const html = require('fs').readFileSync('out/renderer/index.html', 'utf8'); if (!html.includes('Content-Security-Policy') || !html.includes(\"script-src 'self'\")) throw new Error('Production CSP missing')"
+        run: |
+          node <<'JS'
+          const html = require('fs').readFileSync('out/renderer/index.html', 'utf8');
+          const policy = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)"/)?.[1]?.replace(/&#39;/g, "'");
+          if (!policy?.includes("script-src 'self'") || !policy.includes("connect-src 'none'") || policy.includes("'unsafe-eval'")) {
+            throw new Error('Production CSP missing or unsafe');
+          }
+          JS
