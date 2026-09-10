@@ -8,7 +8,7 @@ import DialogHost from './components/DialogHost'
 import InlineLabelEditor from './components/InlineLabelEditor'
 import StateTableEditor from './components/StateTableEditor'
 import PrintRoot from './components/PrintRoot'
-import { dispatchCommand } from './commands'
+import { dispatchCommand, subscribeCommandContext } from './commands'
 import { confirmDiscardIfDirty } from './store/netlistOps'
 import { useCircuitStore } from './store/circuitStore'
 import styles from './styles/App.module.css'
@@ -17,6 +17,8 @@ export default function App(): React.JSX.Element {
   const timingPanelVisible = useCircuitStore((s) => s.timingPanelVisible)
   const fileName = useCircuitStore((s) => s.netlist.metadata.name)
   const dirty = useCircuitStore((s) => s.dirty)
+
+  useEffect(subscribeCommandContext, [])
 
   // Route native-menu / accelerator commands into the shared dispatcher.
   useEffect(() => {

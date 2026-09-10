@@ -258,8 +258,10 @@ export function useCanvasInteraction(canvasRef: RefObject<HTMLCanvasElement | nu
 
     function onKeyDown(e: KeyboardEvent): void {
       const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' || target.isContentEditable)) return
       const store = useCircuitStore.getState()
+      if (store.dialog !== null) return
 
       if (e.key === ' ') {
         spaceDown = true

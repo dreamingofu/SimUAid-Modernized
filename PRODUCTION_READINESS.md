@@ -13,6 +13,10 @@ security certification or a substitute for the university's acceptance process.
 - File reads and writes have a 10 MiB limit. Saves write and flush a temporary file
   before replacing the destination. Renderer retains dirty state on failure or
   when newer edits were not included in a completed save.
+- Existing destinations require an actual non-truncating write open before
+  replacement, including a regression test for Windows ACL data-write denial.
+- Text fields keep native Select All, Copy, Paste, Cut, Undo and Redo shortcuts;
+  circuit shortcuts resume after text editors and modal dialogs close.
 - Native window close requests pass through Save / Don't Save / Cancel. Save
   cancellation or failure leaves the application open.
 - Circuit imports are capped at 5,000 components, 10,000 wires and 50,000 segments; they validate document schema and finite values before replacing
@@ -25,6 +29,15 @@ security certification or a substitute for the university's acceptance process.
   stapled notarization ticket validation, and Gatekeeper assessment.
 - VHDL exports have legal identifiers and preserve port connectivity; the UI
   explicitly identifies the output as a structural template requiring external models.
+
+## Packaged smoke evidence
+
+The signed Apple Silicon candidate was launched locally with the production
+sandbox and CSP. Native dialogs opened `samples/and-gate.ckt`, saved a separate
+test copy, and reopened that copy. A changed default delay reached the saved
+document. Cancelling a dirty-window close preserved the open editor. Print Preview
+opened successfully, and the package contained Electron/Chromium license notices.
+This smoke test does not establish Windows installation or course-circuit acceptance.
 
 ## Required before campus rollout
 

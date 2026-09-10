@@ -14,6 +14,9 @@ export interface OpenCktResult {
  * direct Node/fs access; everything goes through these channels.
  */
 const api = {
+  setCommandContext: (editing: boolean, modal: boolean): Promise<void> =>
+    ipcRenderer.invoke('window:setCommandContext', editing, modal),
+  editText: (action: 'selectAll' | 'delete'): Promise<void> => ipcRenderer.invoke('window:editText', action),
   ready: (): Promise<void> => ipcRenderer.invoke('window:ready'),
   completeClose: (request: string, approved: boolean): Promise<void> =>
     ipcRenderer.invoke('window:completeClose', request, approved),

@@ -8,6 +8,8 @@ const mock = vi.hoisted(() => {
   const policies = new Map<string, (...args: any[]) => any>()
   const webContents = {
     mainFrame: frame, send: vi.fn(),
+    setIgnoreMenuShortcuts: vi.fn(), selectAll: vi.fn(), delete: vi.fn(),
+    copy: vi.fn(), paste: vi.fn(), cut: vi.fn(), undo: vi.fn(), redo: vi.fn(),
     setWindowOpenHandler: vi.fn(fn => policies.set('window', fn)), on: vi.fn((name, fn) => webEvents.set(name, fn)),
     session: { setPermissionRequestHandler: vi.fn(fn => policies.set('permission-request', fn)), setPermissionCheckHandler: vi.fn(fn => policies.set('permission-check', fn)) }
   }
@@ -24,6 +26,58 @@ const mock = vi.hoisted(() => {
     dialog: { showOpenDialog: vi.fn(), showSaveDialog: vi.fn(), showMessageBox: vi.fn() },
     readDocument: vi.fn(), writeDocument: vi.fn()
   }
+})
+
+describe('native text editing shortcuts', () => {
+  it('disables circuit accelerators only while editing or a modal is open', () => {
+    invoke('window:setCommandContext', trusted(), true, false)
+    expect(mock.window.webContents.setIgnoreMenuShortcuts).toHaveBeenLastCalledWith(true)
+    invoke('window:setCommandContext', trusted(), false, true)
+    expect(mock.window.webContents.setIgnoreMenuShortcuts).toHaveBeenLastCalledWith(true)
+    invoke('window:setCommandContext', trusted(), false, false)
+    expect(mock.window.webContents.setIgnoreMenuShortcuts).toHaveBeenLastCalledWith(false)
+  })
+
+  it.each([
+    ['a', false, 'selectAll'], ['c', false, 'copy'], ['v', false, 'paste'],
+    ['x', false, 'cut'], ['z', false, 'undo'], ['z', true, 'redo'], ['y', false, 'redo']
+  ] as const)('routes %s directly to native %s while typing', (key, shift, action) => {
+    invoke('window:setCommandContext', trusted(), true, false)
+    const event = { preventDefault: vi.fn() }
+    const before = mock.window.webContents[action].mock.calls.length
+    mock.webEvents.get('before-input-event')!(event, {
+      type: 'keyDown', key, shift, meta: process.platform === 'darwin', control: process.platform !== 'darwin', alt: false
+    })
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(mock.window.webContents[action]).toHaveBeenCalledTimes(before + 1)
+    invoke('window:setCommandContext', trusted(), false, false)
+  })
+
+  it('preserves circuit shortcuts outside text fields and ignores keyup or AltGr', () => {
+    const event = { preventDefault: vi.fn() }
+    const key = { type: 'keyDown', key: 'a', meta: true, control: true, alt: false }
+    invoke('window:setCommandContext', trusted(), false, false)
+    mock.webEvents.get('before-input-event')!(event, key)
+    invoke('window:setCommandContext', trusted(), true, false)
+    mock.webEvents.get('before-input-event')!(event, { ...key, type: 'keyUp' })
+    mock.webEvents.get('before-input-event')!(event, { ...key, alt: true })
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    invoke('window:setCommandContext', trusted(), false, false)
+  })
+
+  it('allows only whitelisted editing operations and boolean contexts', () => {
+    expect(() => invoke('window:setCommandContext', trusted(), 'true', false)).toThrow('Invalid command context')
+    expect(() => invoke('window:editText', trusted(), 'executeJavaScript')).toThrow('Invalid text editing command')
+    expect(() => invoke('window:editText', trusted(), 'paste')).toThrow('Invalid text editing command')
+    expect(() => invoke('window:editText', trusted(), 'copy')).toThrow('Invalid text editing command')
+    invoke('window:setCommandContext', trusted(), true, false)
+    const before = mock.window.webContents.selectAll.mock.calls.length
+    invoke('window:editText', trusted(), 'selectAll')
+    expect(mock.window.webContents.selectAll).toHaveBeenCalledTimes(before + 1)
+    invoke('window:setCommandContext', trusted(), false, false)
+    invoke('window:editText', trusted(), 'selectAll')
+    expect(mock.window.webContents.selectAll).toHaveBeenCalledTimes(before + 1)
+  })
 })
 vi.mock('electron', () => ({
   app: mock.app, BrowserWindow: mock.BrowserWindow, dialog: mock.dialog,

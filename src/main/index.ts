@@ -15,7 +15,13 @@ let closeApproved = false
 let rendererUnavailable = false
 let closePromptOpen = false
 let activeRequests = 0
+let textEditing = false
+let modalOpen = false
 let closeTimer: ReturnType<typeof setTimeout> | undefined
+
+const TEXT_ACTIONS = ['selectAll', 'delete', 'copy', 'paste', 'cut', 'undo', 'redo'] as const
+type TextAction = typeof TEXT_ACTIONS[number]
+const TEXT_KEYS: Record<string, TextAction> = { a: 'selectAll', c: 'copy', v: 'paste', x: 'cut', z: 'undo', y: 'redo' }
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
   if (!mainWindow || event.sender !== mainWindow.webContents
@@ -82,6 +88,9 @@ function buildMenu(win: BrowserWindow): Menu {
         label: item.label,
         accelerator: item.accelerator,
         click: () => {
+          if (textEditing && item.id === 'edit.selectAll') return win.webContents.selectAll()
+          if (textEditing && item.id === 'edit.delete') return win.webContents.delete()
+          if ((textEditing || modalOpen) && !item.id?.startsWith('help.')) return
           if (item.id) win.webContents.send('menu:command', item.id)
         }
       }
@@ -99,6 +108,8 @@ function createWindow(): void {
   closePromptOpen = false
   closeApproved = false
   pendingClose = null
+  textEditing = false
+  modalOpen = false
   editablePaths.clear()
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -120,6 +131,17 @@ function createWindow(): void {
   // window shows only the styled React MenuBar.
   Menu.setApplicationMenu(buildMenu(mainWindow))
   mainWindow.setMenuBarVisibility(false)
+
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    // Resolve text shortcuts in the main process, before the next typed key can
+    // overtake an asynchronous renderer menu-command round trip.
+    const commandModifier = process.platform === 'darwin' ? input.meta : input.control
+    if (!textEditing || input.type !== 'keyDown' || !commandModifier || input.alt) return
+    const action = input.shift && input.key.toLowerCase() === 'z' ? 'redo' : TEXT_KEYS[input.key.toLowerCase()]
+    if (!action) return
+    event.preventDefault()
+    mainWindow?.webContents[action]()
+  })
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault())
@@ -160,6 +182,20 @@ function createWindow(): void {
 }
 
 // --- File IPC: the renderer owns no fs access; it asks the main process. -----
+
+handle('window:setCommandContext', (_event, editing: boolean, modal: boolean) => {
+  if (typeof editing !== 'boolean' || typeof modal !== 'boolean') throw new Error('Invalid command context.')
+  textEditing = editing
+  modalOpen = modal
+  mainWindow?.webContents.setIgnoreMenuShortcuts(editing || modal)
+})
+
+handle('window:editText', (_event, action: TextAction) => {
+  // Clipboard operations are permitted only by an actual native key event,
+  // never through renderer IPC (including runtime calls outside TS types).
+  if (action !== 'selectAll' && action !== 'delete') throw new Error('Invalid text editing command.')
+  if (textEditing) mainWindow?.webContents[action]()
+})
 
 handle('dialog:openCkt', async () => {
   if (!mainWindow) return null

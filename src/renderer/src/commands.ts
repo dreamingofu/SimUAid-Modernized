@@ -150,14 +150,14 @@ async function confirmAndDelete(): Promise<void> {
 export async function dispatchCommand(id: MenuCommandId): Promise<void> {
   const store = useCircuitStore.getState()
 
-  // Native accelerators fire even while typing in an input/dialog; don't let the
-  // destructive canvas commands hijack the keystroke in that case.
-  const el = document.activeElement
-  const typing =
-    el instanceof HTMLInputElement ||
-    el instanceof HTMLTextAreaElement ||
-    el instanceof HTMLSelectElement
-  if (typing && (id === 'edit.delete' || id === 'edit.selectAll')) return
+  const typing = isTextEditing(document.activeElement)
+  if (typing && (id === 'edit.delete' || id === 'edit.selectAll')) {
+    await window.api.editText(id === 'edit.selectAll' ? 'selectAll' : 'delete')
+    return
+  }
+  // Native menu clicks still arrive when accelerators are disabled. Preserve
+  // draft dialog values and keep circuit commands away from text editors.
+  if ((typing || store.dialog !== null) && !id.startsWith('help.')) return
 
   switch (id) {
     // File
@@ -333,5 +333,42 @@ export async function dispatchCommand(id: MenuCommandId): Promise<void> {
       store.setStatusMessage(`${menuCommandLabel(id)}: not implemented yet`)
       return
     }
+  }
+}
+
+function isTextEditing(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)
+}
+
+/** Keep accelerator ownership in sync with focus and modal state, once per change. */
+export function subscribeCommandContext(): () => void {
+  let focused: EventTarget | null = document.activeElement
+  let previous = ''
+  const update = (): void => {
+    const store = useCircuitStore.getState()
+    const typing = isTextEditing(focused)
+    const modal = store.dialog !== null
+    const next = `${typing}:${modal}`
+    if (next === previous) return
+    previous = next
+    void window.api.setCommandContext(typing, modal)
+  }
+  const focusIn = (event: FocusEvent): void => { focused = event.target; update() }
+  const focusOut = (event: FocusEvent): void => { focused = event.relatedTarget; update() }
+  document.addEventListener('focusin', focusIn)
+  document.addEventListener('focusout', focusOut)
+  // Removing a focused input does not reliably emit focusout. Recheck after
+  // React commits dialog/inline-editor unmounts so canvas shortcuts return.
+  const observer = new MutationObserver(() => { focused = document.activeElement; update() })
+  observer.observe(document.body, { childList: true, subtree: true })
+  const unsubscribe = useCircuitStore.subscribe(update)
+  update()
+  return () => {
+    unsubscribe()
+    observer.disconnect()
+    document.removeEventListener('focusin', focusIn)
+    document.removeEventListener('focusout', focusOut)
+    void window.api.setCommandContext(false, false)
   }
 }
