@@ -9,6 +9,7 @@ import InlineLabelEditor from './components/InlineLabelEditor'
 import StateTableEditor from './components/StateTableEditor'
 import PrintRoot from './components/PrintRoot'
 import { dispatchCommand } from './commands'
+import { confirmDiscardIfDirty } from './store/netlistOps'
 import { useCircuitStore } from './store/circuitStore'
 import styles from './styles/App.module.css'
 
@@ -22,6 +23,19 @@ export default function App(): React.JSX.Element {
     const unsubscribe = window.api.onMenuCommand((id) => {
       void dispatchCommand(id)
     })
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.api.onCloseRequested(async (request) => {
+      let approved = false
+      try {
+        approved = await confirmDiscardIfDirty(() => useCircuitStore.getState())
+      } finally {
+        await window.api.completeClose(request, approved)
+      }
+    })
+    void window.api.ready()
     return unsubscribe
   }, [])
 

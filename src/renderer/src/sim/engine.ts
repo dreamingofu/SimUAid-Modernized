@@ -48,6 +48,13 @@ const { ZERO, ONE, X, Z } = LogicValue
 
 export const MAX_EVENTS_PER_RUN = 100_000
 
+export class SimulationLimitError extends Error {
+  constructor(message = 'Simulation requires more than 100,000 queued events. Shorten the simulation time or increase clock/waveform periods.') {
+    super(message)
+    this.name = 'SimulationLimitError'
+  }
+}
+
 export interface WaveformSample {
   t: number
   v: LogicValue
@@ -470,6 +477,22 @@ export class Simulator {
    * absolute grid from the next toggle after `now`, never replaying the past.
    */
   private scheduleStimulus(target: number): void {
+    // Check the complete scheduling operation before touching the event queue.
+    // A large requested horizon must not allocate billions of events before
+    // process() gets a chance to enforce MAX_EVENTS_PER_RUN.
+    if (!Number.isFinite(target) || target > Number.MAX_SAFE_INTEGER / 4) {
+      throw new SimulationLimitError('Simulation time exceeds the supported numeric range. Shorten the simulation time or reset the circuit.')
+    }
+    let count = this.queue.size
+    this.visitStimulus(target, () => {
+      if (++count > MAX_EVENTS_PER_RUN) throw new SimulationLimitError()
+    })
+    this.visitStimulus(target, (at, event) => this.push(at, event))
+    this.scheduledUpTo = Math.max(this.scheduledUpTo, target)
+  }
+
+  /** Visits proposed events; the first pass counts them without mutating state. */
+  private visitStimulus(target: number, push: (at: number, event: EventBody) => void): void {
     const from = Math.max(this.scheduledUpTo, this.time)
     if (target <= from) return
 
@@ -478,7 +501,7 @@ export class Simulator {
       let k = Math.max(1, Math.floor((2 * from) / this.period))
       while (this.clockToggleTime(k) <= from) k++
       for (; this.clockToggleTime(k) <= target; k++) {
-        this.push(this.clockToggleTime(k), {
+        push(this.clockToggleTime(k), {
           kind: 'drive',
           pinId: this.clockPinId,
           value: k % 2 === 1 ? complement(initial) : initial
@@ -489,11 +512,15 @@ export class Simulator {
     for (const src of this.inputs) {
       if (src.rows.length === 0) continue
       const drive = (at: number, value: LogicValue): void => {
-        if (at > from && at <= target) this.push(at, { kind: 'drive', pinId: src.pinId, value })
+        if (at > from && at <= target) push(at, { kind: 'drive', pinId: src.pinId, value })
       }
       if (src.cycleNs > 0) {
         const restartsCycle = src.rows[0].timeNs !== 0
-        for (let cycle = Math.floor(from / src.cycleNs); cycle * src.cycleNs <= target; cycle++) {
+        const firstCycle = Math.floor(from / src.cycleNs)
+        if (!Number.isSafeInteger(firstCycle) || !Number.isSafeInteger(Math.floor(target / src.cycleNs))) {
+          throw new SimulationLimitError('Input waveform repeat count exceeds the supported numeric range. Increase the waveform repeat period.')
+        }
+        for (let cycle = firstCycle; cycle * src.cycleNs <= target; cycle++) {
           const base = cycle * src.cycleNs
           // Each repeat starts from the waveform's t=0 value (Z when no row is at 0).
           if (restartsCycle) drive(base, src.initial)
@@ -515,16 +542,14 @@ export class Simulator {
         const driveAt = slot * this.period + (slot === 0 ? 0 : this.quarter)
         const sampleAt = (slot + 1) * this.period - this.quarter
         if (driveAt > from && driveAt <= target) {
-          this.push(driveAt, { kind: 'drive', pinId: outPinId, value: checkerDrive(input[slot]) })
-          if (input[slot] === 'R') this.push(driveAt, { kind: 'softreset' })
+          push(driveAt, { kind: 'drive', pinId: outPinId, value: checkerDrive(input[slot]) })
+          if (input[slot] === 'R') push(driveAt, { kind: 'softreset' })
         }
         if (sampleAt > from && sampleAt <= target && (output[slot] === '0' || output[slot] === '1')) {
-          this.push(sampleAt, { kind: 'sample', slot })
+          push(sampleAt, { kind: 'sample', slot })
         }
       }
     }
-
-    this.scheduledUpTo = target
   }
 
   private push(time: number, ev: EventBody): void {

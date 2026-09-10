@@ -4,8 +4,8 @@ Installers are written to `dist/`:
 
 | Platform | File |
 | --- | --- |
-| Windows x64 | `SimUaid-0.1.2-windows-x64-setup.exe` |
-| macOS Intel and Apple Silicon | `SimUaid-0.1.2-mac-universal.dmg` |
+| Windows x64 | `SimUaid-0.1.3-rc.1-windows-x64-setup.exe` |
+| macOS Intel and Apple Silicon | `SimUaid-0.1.3-rc.1-mac-universal.dmg` |
 
 The version in each filename comes from `package.json`.
 
@@ -35,11 +35,11 @@ branches do not create releases.
 ## Create a release
 
 1. Commit and push the source and release configuration you want to distribute.
-2. Create and push a tag matching `package.json` (currently `v0.1.2`):
+2. Create and push a tag matching `package.json` (currently `v0.1.3-rc.1`):
 
    ```sh
-   git tag v0.1.2
-   git push origin v0.1.2
+   git tag v0.1.3-rc.1
+   git push origin v0.1.3-rc.1
    ```
 
 3. Wait for **Actions → Release** to finish. It tests and builds both platforms,

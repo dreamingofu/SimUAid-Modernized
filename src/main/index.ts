@@ -1,11 +1,69 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain } from 'electron'
-import type { MenuItemConstructorOptions } from 'electron'
+import type { MenuItemConstructorOptions, IpcMainInvokeEvent } from 'electron'
 import { dirname, join } from 'path'
-import { readFile, writeFile } from 'fs/promises'
+import { stat } from 'fs/promises'
+import { randomUUID } from 'crypto'
+import { readDocument, writeDocument, validateText, validateExportFiles } from './files'
 import { MENU_STRUCTURE, type MenuItemSpec } from '../shared/menu'
 import type { ConfirmOptions } from '../shared/dialog'
 
 let mainWindow: BrowserWindow | null = null
+const editablePaths = new Set<string>()
+let rendererReady = false
+let pendingClose: string | null = null
+let closeApproved = false
+let rendererUnavailable = false
+let closePromptOpen = false
+let activeRequests = 0
+let closeTimer: ReturnType<typeof setTimeout> | undefined
+
+function assertTrustedSender(event: IpcMainInvokeEvent): void {
+  if (!mainWindow || event.sender !== mainWindow.webContents
+    || event.senderFrame !== mainWindow.webContents.mainFrame) {
+    throw new Error('Untrusted IPC sender.')
+  }
+}
+
+function handle<Args extends unknown[]>(channel: string, listener: (event: IpcMainInvokeEvent, ...args: Args) => unknown): void {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedSender(event)
+    if (channel.startsWith('window:')) return listener(event, ...args as Args)
+    activeRequests++
+    return Promise.resolve().then(() => listener(event, ...args as Args)).finally(() => { activeRequests-- })
+  })
+}
+
+function watchCloseResponse(): void {
+  clearTimeout(closeTimer)
+  closeTimer = setTimeout(() => {
+    if (!pendingClose) return
+    // Never compete with an open Save/Cancel dialog or an in-flight disk write.
+    if (activeRequests) watchCloseResponse()
+    else void confirmUnavailableClose()
+  }, 5000)
+  closeTimer.unref()
+}
+
+async function confirmUnavailableClose(): Promise<void> {
+  const win = mainWindow
+  if (!win || closePromptOpen) return
+  pendingClose = null
+  clearTimeout(closeTimer)
+  closePromptOpen = true
+  try {
+    const result = await dialog.showMessageBox(win, {
+      type: 'warning', message: 'The editor is not responding.',
+      detail: 'Unsaved changes cannot be saved right now. Close without saving?',
+      buttons: ['Cancel', 'Close without saving'], defaultId: 0, cancelId: 0
+    })
+    if (result.response === 1) {
+      closeApproved = true
+      win.destroy()
+    }
+  } finally {
+    closePromptOpen = false
+  }
+}
 
 /**
  * Builds the native application menu from the shared descriptor. This menu is the
@@ -36,6 +94,12 @@ function buildMenu(win: BrowserWindow): Menu {
 }
 
 function createWindow(): void {
+  rendererReady = false
+  rendererUnavailable = false
+  closePromptOpen = false
+  closeApproved = false
+  pendingClose = null
+  editablePaths.clear()
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -48,7 +112,7 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   })
 
@@ -57,12 +121,38 @@ function createWindow(): void {
   Menu.setApplicationMenu(buildMenu(mainWindow))
   mainWindow.setMenuBarVisibility(false)
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  mainWindow.webContents.on('will-navigate', (event) => event.preventDefault())
+  mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault())
+  mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  mainWindow.webContents.session.setPermissionCheckHandler(() => false)
+
+  const editorUnavailable = (): void => {
+    rendererUnavailable = true
+    if (pendingClose) void confirmUnavailableClose()
+  }
+  mainWindow.webContents.on('render-process-gone', editorUnavailable)
+  mainWindow.on('unresponsive', editorUnavailable)
+  mainWindow.on('responsive', () => { rendererUnavailable = false })
+  mainWindow.on('close', (event) => {
+    if (closeApproved || !rendererReady) return
+    event.preventDefault()
+    if (rendererUnavailable) {
+      void confirmUnavailableClose()
+      return
+    }
+    if (pendingClose) return
+    pendingClose = randomUUID()
+    mainWindow?.webContents.send('window:confirmClose', pendingClose)
+    watchCloseResponse()
+  })
   mainWindow.on('ready-to-show', () => mainWindow?.show())
   mainWindow.on('closed', () => {
+    clearTimeout(closeTimer)
     mainWindow = null
   })
 
-  if (process.env.ELECTRON_RENDERER_URL) {
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
@@ -71,7 +161,7 @@ function createWindow(): void {
 
 // --- File IPC: the renderer owns no fs access; it asks the main process. -----
 
-ipcMain.handle('dialog:openCkt', async () => {
+handle('dialog:openCkt', async () => {
   if (!mainWindow) return null
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Open Circuit',
@@ -83,13 +173,16 @@ ipcMain.handle('dialog:openCkt', async () => {
   })
   if (result.canceled || result.filePaths.length === 0) return null
   const path = result.filePaths[0]
-  const contents = await readFile(path, 'utf-8')
+  const contents = await readDocument(path)
+  editablePaths.add(path)
   return { path, contents }
 })
 
-ipcMain.handle(
+handle(
   'dialog:saveCktAs',
   async (_event, contents: string, defaultName?: string) => {
+    validateText(contents)
+    if (defaultName !== undefined && typeof defaultName !== 'string') throw new Error('Invalid filename.')
     if (!mainWindow) return null
     const result = await dialog.showSaveDialog(mainWindow, {
       title: 'Save Circuit As',
@@ -97,17 +190,19 @@ ipcMain.handle(
       filters: [{ name: 'SimUaid Circuit', extensions: ['ckt'] }]
     })
     if (result.canceled || !result.filePath) return null
-    await writeFile(result.filePath, contents, 'utf-8')
+    await writeDocument(result.filePath, contents)
+    editablePaths.add(result.filePath)
     return result.filePath
   }
 )
 
-ipcMain.handle('file:saveCkt', async (_event, path: string, contents: string) => {
-  await writeFile(path, contents, 'utf-8')
+handle('file:saveCkt', async (_event, path: string, contents: string) => {
+  if (typeof path !== 'string' || !editablePaths.has(path)) throw new Error('Use Open or Save As to choose this file first.')
+  await writeDocument(path, contents)
   return true
 })
 
-ipcMain.handle('dialog:openChk', async () => {
+handle('dialog:openChk', async () => {
   if (!mainWindow) return null
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Open Checker File',
@@ -119,13 +214,15 @@ ipcMain.handle('dialog:openChk', async () => {
   })
   if (result.canceled || result.filePaths.length === 0) return null
   const path = result.filePaths[0]
-  const contents = await readFile(path, 'utf-8')
+  const contents = await readDocument(path)
   return { path, contents }
 })
 
-ipcMain.handle(
+handle(
   'dialog:saveVhdl',
   async (_event, defaultName: string, files: { name: string; contents: string }[]) => {
+    validateExportFiles(files)
+    if (typeof defaultName !== 'string') throw new Error('Invalid filename.')
     if (!mainWindow) return null
     const result = await dialog.showSaveDialog(mainWindow, {
       title: 'Save VHDL',
@@ -134,15 +231,34 @@ ipcMain.handle(
     })
     if (result.canceled || !result.filePath) return null
     const dir = dirname(result.filePath)
-    await writeFile(result.filePath, files[0].contents, 'utf-8')
-    for (const extra of files.slice(1)) {
-      await writeFile(join(dir, extra.name), extra.contents, 'utf-8')
+    const destinations = [result.filePath, ...files.slice(1).map(file => join(dir, file.name))]
+    if (new Set(destinations.map(path => path.toLowerCase())).size !== destinations.length) {
+      throw new Error('Export filenames conflict with the chosen filename.')
     }
+    const existing = []
+    for (const path of destinations.slice(1)) {
+      if (await stat(path).then(() => true, (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+        return false
+      })) existing.push(path)
+    }
+    if (existing.length) {
+      const response = await dialog.showMessageBox(mainWindow, {
+        type: 'warning', message: 'Replace existing VHDL files?', detail: existing.join('\n'),
+        buttons: ['Cancel', 'Replace'], defaultId: 0, cancelId: 0
+      })
+      if (response.response !== 1) return null
+    }
+    for (let i = 0; i < files.length; i++) await writeDocument(destinations[i], files[i].contents)
     return result.filePath
   }
 )
 
-ipcMain.handle('dialog:confirm', async (_event, options: ConfirmOptions) => {
+handle('dialog:confirm', async (_event, options: ConfirmOptions) => {
+  if (!options || typeof options.message !== 'string' || !Array.isArray(options.buttons)
+    || !options.buttons.length || options.buttons.length > 10 || options.buttons.some(value => typeof value !== 'string')) {
+    throw new Error('Invalid confirmation request.')
+  }
   const fallback = options.cancelId ?? 0
   if (!mainWindow) return fallback
   const result = await dialog.showMessageBox(mainWindow, {
@@ -155,6 +271,17 @@ ipcMain.handle('dialog:confirm', async (_event, options: ConfirmOptions) => {
     noLink: true
   })
   return result.response
+})
+
+handle('window:ready', () => { rendererReady = true })
+handle('window:completeClose', (_event, request: unknown, approved: unknown) => {
+  if (typeof request !== 'string' || request !== pendingClose || typeof approved !== 'boolean') return
+  pendingClose = null
+  clearTimeout(closeTimer)
+  if (approved) {
+    closeApproved = true
+    mainWindow?.close()
+  }
 })
 
 // --- App lifecycle -----------------------------------------------------------

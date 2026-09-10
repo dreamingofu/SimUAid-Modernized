@@ -78,6 +78,32 @@ function showAbout(): void {
   )
 }
 
+async function showHelp(id: 'help.index' | 'help.usingHelp' | 'help.context'): Promise<void> {
+  const tool = useCircuitStore.getState().activeTool
+  const toolHelp: Record<typeof tool.kind, string> = {
+    select: 'Click a part or wire to select it. Click a switch to toggle its value. Shift-click a wire to highlight its entire net.',
+    wire: 'Click a pin to start a wire. Click to add corners, then click another pin to connect. Double-click to finish a dangling wire. Escape cancels the unfinished wire.',
+    label: 'Click a component body or pin to edit its label. Pins with the same non-empty label are electrically connected even without a drawn wire.',
+    move: 'Drag a component to move it. Connected wire endpoints follow the component. Arrow keys move selected components by one grid step.',
+    erase: 'Click a component or wire to erase it. Save a copy before making destructive changes.',
+    delay: 'Click a component to edit its propagation delay. Click an Input Signal to edit its waveform.',
+    place: 'Click the canvas to place the selected part. Choose Edit → Select when finished placing parts.'
+  }
+  const detail = id === 'help.context'
+    ? `Current tool: ${tool.kind}\n\n${toolHelp[tool.kind]}`
+    : id === 'help.usingHelp'
+      ? 'Help Index contains a quick start. Context Sensitive Help explains the active canvas tool. Hover over toolbar buttons to see their names. The status bar reports errors and simulation status.\n\nThis help is available offline. Save circuits as .ckt files and keep backup copies before major edits.'
+      : '1. Choose a component from Parts, then click the canvas to place it.\n2. Choose Edit → Wire; click a source pin, then a destination pin.\n3. Choose Edit → Select and click switches to change their values. Enable View → Show I/O Values to inspect signals.\n4. For timed circuits, add a Clock or Input Signal. Set simulation time in Simulate → Options, then use Go or Step.\n5. Open Window → Timing Diagram to inspect waveforms.\n6. Use File → Save to keep your circuit as a .ckt file.\n\nScroll to zoom. Hold Space and drag to pan. Use Edit → Move to move parts. Right-click a State Machine to edit its state table.'
+  await window.api.confirm({
+    type: 'info',
+    message: id === 'help.context' ? 'Current Tool Help' : id === 'help.usingHelp' ? 'Using Help' : 'SimUaid Quick Start',
+    detail,
+    buttons: ['OK'],
+    defaultId: 0,
+    cancelId: 0
+  })
+}
+
 /** Delete with the spec's warnings for whole-net and whole-circuit removals. */
 async function confirmAndDelete(): Promise<void> {
   const store = useCircuitStore.getState()
@@ -284,6 +310,11 @@ export async function dispatchCommand(id: MenuCommandId): Promise<void> {
       return
 
     // Help
+    case 'help.index':
+    case 'help.usingHelp':
+    case 'help.context':
+      await showHelp(id)
+      return
     case 'help.about':
       showAbout()
       return

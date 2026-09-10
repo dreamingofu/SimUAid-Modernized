@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import Modal from './Modal'
 import { useCircuitStore } from '../store/circuitStore'
-import { generateVhdl, validateForVhdl, type VhdlMode } from '../vhdl/export'
+import { generateVhdl, isVhdlIdentifier, validateForVhdl, type VhdlMode } from '../vhdl/export'
 import styles from '../styles/Modal.module.css'
 
 export default function VhdlDialog(): React.JSX.Element {
@@ -10,62 +10,75 @@ export default function VhdlDialog(): React.JSX.Element {
   const setStatusMessage = useCircuitStore((s) => s.setStatusMessage)
   const [mode, setMode] = useState<VhdlMode>('synth')
   const [entity, setEntity] = useState(
-    () => netlist.metadata.name.replace(/[^a-zA-Z0-9_]/g, '_').replace(/^([^a-zA-Z])/, 'e$1') || 'circuit'
+    () => {
+      const name = netlist.metadata.name.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+      return isVhdlIdentifier(name) ? name : 'circuit'
+    }
   )
+  const pending = useRef(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
+
+  function close(): void {
+    if (!pending.current) closeDialog()
+  }
 
   async function submit(): Promise<void> {
-    const errors = validateForVhdl(netlist)
-    if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(entity)) {
-      errors.unshift(`"${entity}" is not a valid VHDL entity name`)
+    // A ref also blocks a second click before React renders disabled controls.
+    if (pending.current) return
+    pending.current = true
+    setSaving(true)
+    setSaveError('')
+    try {
+      const errors = validateForVhdl(netlist, entity)
+      if (errors.length > 0) {
+        setSaveError(errors.slice(0, 12).join('\n') + (errors.length > 12 ? `\n… ${errors.length - 12} more` : ''))
+        setStatusMessage('VHDL export failed validation')
+        return
+      }
+      const files = generateVhdl(netlist, entity, mode)
+      const path = await window.api.saveVhdl(files.entityFileName, [
+        { name: files.entityFileName, contents: files.entity },
+        ...files.packages.map((p) => ({ name: p.name, contents: p.contents }))
+      ])
+      if (!path) return
+      setStatusMessage(`VHDL saved to ${path}`)
+      closeDialog()
+    } catch (error) {
+      const message = `VHDL export failed: ${error instanceof Error ? error.message : String(error)}`
+      setSaveError(message)
+      setStatusMessage(message)
+    } finally {
+      pending.current = false
+      setSaving(false)
     }
-    if (errors.length > 0) {
-      await window.api.confirm({
-        type: 'error',
-        message: 'VHDL export failed validation',
-        detail: errors.slice(0, 12).join('\n') + (errors.length > 12 ? `\n… ${errors.length - 12} more` : ''),
-        buttons: ['OK'],
-        defaultId: 0,
-        cancelId: 0
-      })
-      return
-    }
-    const files = generateVhdl(netlist, entity, mode)
-    const path = await window.api.saveVhdl(files.entityFileName, [
-      { name: files.entityFileName, contents: files.entity },
-      ...files.packages.map((p) => ({ name: p.name, contents: p.contents }))
-    ])
-    closeDialog()
-    if (!path) return
-    setStatusMessage(`VHDL saved to ${path}`)
-    await window.api.confirm({
-      type: 'info',
-      message: 'Success in saving of VHDL file',
-      detail: `${path}\n(The component package was written alongside it.)`,
-      buttons: ['OK'],
-      defaultId: 0,
-      cancelId: 0
-    })
   }
 
   return (
-    <Modal title="Save VHDL" onClose={closeDialog}>
+    <Modal title="Save VHDL structural template" onClose={close}>
+      <p>
+        Exports wiring and component declarations. External component implementations are required
+        before simulation or synthesis. Clock and input waveforms must be supplied separately.
+        N-bit parts, buses, state machines, and checkers are not supported.
+      </p>
+      {saveError && <p role="alert" style={{ whiteSpace: 'pre-line' }}>{saveError}</p>}
       <label className={styles.field}>
         <span>Entity name</span>
-        <input value={entity} autoFocus onChange={(e) => setEntity(e.target.value)} />
+        <input value={entity} disabled={saving} autoFocus onChange={(e) => setEntity(e.target.value)} />
       </label>
       <label className={styles.field}>
         <span>Output type</span>
-        <select value={mode} onChange={(e) => setMode(e.target.value as VhdlMode)}>
-          <option value="synth">Synthesizable VHDL</option>
-          <option value="sim">VHDL for Simulation Only (preserves delays)</option>
+        <select value={mode} disabled={saving} onChange={(e) => setMode(e.target.value as VhdlMode)}>
+          <option value="synth">Structural template without delay generics</option>
+          <option value="sim">Structural template with delay generics</option>
         </select>
       </label>
       <div className={styles.actions}>
-        <button type="button" onClick={closeDialog}>
+        <button type="button" disabled={saving} onClick={close}>
           Cancel
         </button>
-        <button type="button" className={styles.primary} onClick={() => void submit()}>
-          Save…
+        <button type="button" disabled={saving} className={styles.primary} onClick={() => void submit()}>
+          {saving ? 'Saving…' : 'Save…'}
         </button>
       </div>
     </Modal>

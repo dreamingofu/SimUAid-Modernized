@@ -5,7 +5,7 @@
 import { useEffect, type RefObject } from 'react'
 import { ComponentType } from '../model/types'
 import { useCircuitStore } from '../store/circuitStore'
-import { getPartDefinition } from '../model/partDefinitions'
+import { defOf } from '../model/partDefinitions'
 import {
   GRID,
   screenToWorld,
@@ -61,11 +61,17 @@ export function useCanvasInteraction(canvasRef: RefObject<HTMLCanvasElement | nu
 
       switch (tool.kind) {
         case 'place': {
-          const def = getPartDefinition(tool.componentType, tool.bits)
+          const def = defOf({
+            type: tool.componentType,
+            bits: tool.bits,
+            smInputs: tool.extra?.smInputs,
+            smOutputs: tool.extra?.smOutputs
+          })
           store.addComponentAt(
             tool.componentType,
             { x: world.x - def.width / 2, y: world.y - def.height / 2 },
-            tool.bits
+            tool.bits,
+            tool.extra
           )
           return
         }

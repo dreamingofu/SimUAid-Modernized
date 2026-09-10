@@ -15,6 +15,13 @@ publish: null
 
 mac:
   artifactName: '${productName}-${version}-mac-${arch}.${ext}'
+  # electron-builder removes Electron's root notices while assembling a .app.
+  # Keep the runtime licenses in Contents/Resources with the distributed app.
+  extraResources:
+    - from: node_modules/electron/dist/LICENSE
+      to: LICENSE.electron.txt
+    - from: node_modules/electron/dist/LICENSES.chromium.html
+      to: LICENSES.chromium.html
   target:
     - target: dmg
       arch: [universal]

@@ -14,6 +14,14 @@ export interface OpenCktResult {
  * direct Node/fs access; everything goes through these channels.
  */
 const api = {
+  ready: (): Promise<void> => ipcRenderer.invoke('window:ready'),
+  completeClose: (request: string, approved: boolean): Promise<void> =>
+    ipcRenderer.invoke('window:completeClose', request, approved),
+  onCloseRequested: (callback: (request: string) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, request: string): void => callback(request)
+    ipcRenderer.on('window:confirmClose', listener)
+    return () => ipcRenderer.removeListener('window:confirmClose', listener)
+  },
   openCkt: (): Promise<OpenCktResult | null> => ipcRenderer.invoke('dialog:openCkt'),
   saveCktAs: (contents: string, defaultName?: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:saveCktAs', contents, defaultName),

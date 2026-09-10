@@ -60,6 +60,7 @@ jobs:
 
       # Preserve the install mode used by the existing lockfile.
       - run: npm ci --legacy-peer-deps
+      - run: npm audit --audit-level=high
       - run: npm run typecheck
       - run: npm test
       - name: Build Windows installer
@@ -164,6 +165,10 @@ jobs:
               exit 1
             }
           else
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "SimUaid $RELEASE_TAG" --notes-file release-notes.md
+            release_flags=()
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              release_flags+=(--prerelease)
+            fi
+            gh release create "$RELEASE_TAG" --verify-tag --draft "${release_flags[@]}" --title "SimUaid $RELEASE_TAG" --notes-file release-notes.md
           fi
           gh release upload "$RELEASE_TAG" installers/*.dmg installers/*.exe installers/SHA256SUMS.txt --clobber
