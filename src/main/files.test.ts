@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, readdir, rm, writeFile, mkdir, stat, chmod, symlink, lstat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { readDocument, writeDocument, validateExportFiles, MAX_DOCUMENT_BYTES } from './files'
 
 const directories: string[] = []
@@ -62,6 +63,20 @@ describe('circuit disk storage', () => {
     await writeDocument(link, 'after')
     expect((await lstat(link)).isSymbolicLink()).toBe(true)
     expect(await readFile(path, 'utf8')).toBe('after')
+  })
+  it.skipIf(process.platform !== 'win32')('respects Windows ACL write denial without replacing the document', async () => {
+    const dir = await directory()
+    const path = join(dir, 'restricted.ckt')
+    await writeFile(path, 'original')
+    const identity = execFileSync('whoami.exe', { encoding: 'utf8' }).trim()
+    try {
+      execFileSync('icacls.exe', [path, '/deny', `${identity}:(W)`])
+      await expect(writeDocument(path, 'changed')).rejects.toThrow()
+      expect(await readFile(path, 'utf8')).toBe('original')
+      expect(await readdir(dir)).toEqual(['restricted.ckt'])
+    } finally {
+      execFileSync('icacls.exe', [path, '/remove:d', identity])
+    }
   })
   it('reports invalid destinations without leaving temporary files', async () => {
     const dir = await directory()

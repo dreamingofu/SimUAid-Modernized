@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { access, open, realpath, rename, unlink, stat } from 'node:fs/promises'
+import { open, realpath, rename, unlink, stat } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { basename, dirname, join, win32 } from 'node:path'
 
@@ -57,7 +57,10 @@ export async function writeDocument(path: string, contents: string): Promise<voi
   if (previous && !previous.isFile()) throw new Error('Destination is not a regular file.')
   if (previous) {
     // Atomic replacement must respect an existing file's permissions and links.
-    await access(path, constants.W_OK)
+    // fs.access(W_OK) ignores Windows ACLs. Request write access without
+    // truncating or creating the file before preparing its replacement.
+    const existing = await open(path, constants.O_WRONLY)
+    await existing.close()
     path = await realpath(path)
   }
   const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`)
