@@ -26,7 +26,7 @@ import {
   touch
 } from './netlistOps'
 import { DEFAULT_BITS, defOf, getPartDefinition } from '../model/partDefinitions'
-import { Simulator, type WaveformTrace } from '../sim/engine'
+import { SimulationLimitError, Simulator, type WaveformTrace } from '../sim/engine'
 import { hexToVec } from '../sim/values'
 import {
   createEmptyNetlist,
@@ -238,6 +238,8 @@ const uid = (): string => crypto.randomUUID()
 // structural edit produces a new netlist and forces a rebuild (resetting FF
 // state); switch toggles leave the netlist untouched and reuse the engine.
 let engine: Simulator | null = null
+let documentGeneration = 0
+let saveInFlight: Promise<boolean> | null = null
 
 function ensureEngine(get: () => CircuitState): Simulator {
   const s = get()
@@ -264,6 +266,17 @@ function publishSim(get: () => CircuitState, set: (partial: Partial<CircuitState
     simTimeNs: engine.time,
     statusMessage
   })
+}
+
+function runSimulation(action: () => void, set: (partial: Partial<CircuitState>) => void): boolean {
+  try {
+    action()
+    return true
+  } catch (error) {
+    if (!(error instanceof SimulationLimitError)) throw error
+    set({ simRunning: false, statusMessage: error.message })
+    return false
+  }
 }
 
 
@@ -300,6 +313,7 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
   redrawNonce: 0,
 
   newCircuit: () => {
+    documentGeneration += 1
     engine = null
     set({
       netlist: createEmptyNetlist(),
@@ -309,11 +323,17 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
       highlight: null,
       interaction: EMPTY_INTERACTION,
       simMode: SimMode.LIVE,
+      simRunning: false,
       simTimeNs: 0,
       pinValues: {},
       busPinValues: {},
       switchValues: {},
       waveforms: [],
+      smActive: {},
+      smEditorOpen: false,
+      dialog: null,
+      printJob: null,
+      activeTool: { kind: 'select' },
       timingCursorNs: null,
       statusMessage: 'New circuit'
     })
@@ -325,20 +345,29 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
   },
 
   loadNetlist: (netlist, path) => {
+    // Resolve first: a rejected document must not alter the current session.
+    const loadedNetlist = stampNetIds(netlist)
+    documentGeneration += 1
     engine = null
     set({
-      netlist: stampNetIds(netlist),
+      netlist: loadedNetlist,
       currentFilePath: path,
       dirty: false,
       selection: EMPTY_SELECTION,
       highlight: null,
       interaction: EMPTY_INTERACTION,
       simMode: SimMode.LIVE,
+      simRunning: false,
       simTimeNs: 0,
       pinValues: {},
       busPinValues: {},
       switchValues: netlist.metadata.switchValues ?? {},
       waveforms: [],
+      smActive: {},
+      smEditorOpen: false,
+      dialog: null,
+      printJob: null,
+      activeTool: { kind: 'select' },
       timingCursorNs: null,
       viewport: { scale: netlist.metadata.scalingFactor || 1, offsetX: 40, offsetY: 40 },
       statusMessage: path ? `Opened ${path}` : 'Loaded circuit'
@@ -829,7 +858,7 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
   simToggleSwitch: (id) => {
     const manual = get().simMode === SimMode.CHANGE
     const next = ensureEngine(get).toggle(id, !manual)
-    set((s) => ({ switchValues: { ...s.switchValues, [id]: next } }))
+    set((s) => ({ switchValues: { ...s.switchValues, [id]: next }, dirty: true }))
     publishSim(get, set)
     if (manual) set({ statusMessage: 'Change mode: click Change to advance one event' })
   },
@@ -839,7 +868,7 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
       set({ statusMessage: 'Step needs a Clock or Input Signal' })
       return
     }
-    ensureEngine(get).step()
+    if (!runSimulation(() => ensureEngine(get).step(), set)) return
     if (get().netlist.components.some((c) => c.type === ComponentType.CLOCK)) {
       set({ simMode: SimMode.CLOCK })
     }
@@ -858,7 +887,7 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
       return
     }
     set({ simRunning: true })
-    ensureEngine(get).go()
+    if (!runSimulation(() => ensureEngine(get).go(), set)) return
     set({ simRunning: false })
     if (s.netlist.components.some((c) => c.type === ComponentType.CLOCK)) {
       set({ simMode: SimMode.CLOCK })
@@ -887,17 +916,25 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
     set({ simMode: SimMode.CHANGE, statusMessage: 'Change Mode: toggle a switch, then click Change' })
   },
 
-  setSimulationOptions: (patch) =>
+  setSimulationOptions: (patch) => {
+    const options = { ...get().netlist.metadata.simulation, ...patch }
+    if (!Number.isFinite(options.simTimeNs) || options.simTimeNs < 1 ||
+        !Number.isFinite(options.clockPeriodNs) || options.clockPeriodNs < 2 ||
+        (options.clockInitialValue !== LogicValue.ZERO && options.clockInitialValue !== LogicValue.ONE)) {
+      set({ statusMessage: 'Invalid simulation options: enter finite times (simulation at least 1 ns, clock period at least 2 ns).' })
+      return
+    }
     set((s) => ({
       netlist: touch({
         ...s.netlist,
         metadata: {
           ...s.netlist.metadata,
-          simulation: { ...s.netlist.metadata.simulation, ...patch }
+          simulation: options
         }
       }),
       dirty: true
-    })),
+    }))
+  },
 
   setDefaultDelay: (ns) =>
     set((s) => ({
@@ -913,11 +950,20 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
   setTimingCursor: (ns) => set({ timingCursorNs: ns }),
 
   open: async () => {
-    if (!(await confirmDiscardIfDirty(get))) return
-    const result = await window.api.openCkt()
-    if (!result) return
     try {
+      if (!(await confirmDiscardIfDirty(get))) return
+      const previous = get()
+      const generation = documentGeneration
+      const result = await window.api.openCkt()
+      if (!result) return
       const netlist = deserializeNetlist(result.contents)
+      // File reads finish asynchronously. Never overwrite another document or
+      // edits made after the discard/save decision while the read was pending.
+      if (generation !== documentGeneration || previous.netlist !== get().netlist ||
+          previous.switchValues !== get().switchValues) {
+        set({ statusMessage: 'Open cancelled: the current circuit changed while the file was being read.' })
+        return
+      }
       get().loadNetlist(netlist, result.path)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -925,23 +971,42 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
     }
   },
 
-  save: async () => {
-    const { currentFilePath, netlist, switchValues } = get()
-    if (!currentFilePath) return get().saveAs()
-    await window.api.saveCkt(currentFilePath, serializeNetlist(netlistForSave(netlist, switchValues)))
-    set({ dirty: false, statusMessage: `Saved ${currentFilePath}` })
-    return true
-  },
+  save: () => saveDocument(false),
 
-  saveAs: async () => {
-    const { netlist, switchValues } = get()
-    const defaultName = `${netlist.metadata.name || 'Untitled'}.ckt`
-    const path = await window.api.saveCktAs(
-      serializeNetlist(netlistForSave(netlist, switchValues)),
-      defaultName
-    )
-    if (!path) return false
-    set({ currentFilePath: path, dirty: false, statusMessage: `Saved ${path}` })
-    return true
-  }
+  saveAs: () => saveDocument(true)
 }))
+
+/** Coalesce overlapping save commands so older writes cannot replace newer ones. */
+function saveDocument(saveAs: boolean): Promise<boolean> {
+  if (saveInFlight) return saveInFlight
+  saveInFlight = (async () => {
+    const { netlist, switchValues, currentFilePath } = useCircuitStore.getState()
+    const generation = documentGeneration
+    try {
+      const contents = serializeNetlist(netlistForSave(netlist, switchValues))
+      let path = currentFilePath
+      if (saveAs || !path) {
+        path = await window.api.saveCktAs(contents, `${netlist.metadata.name || 'Untitled'}.ckt`)
+        if (!path) return false
+      } else {
+        await window.api.saveCkt(path, contents)
+      }
+      if (generation !== documentGeneration) return false
+      const current = useCircuitStore.getState()
+      const unchanged = current.netlist === netlist && current.switchValues === switchValues
+      useCircuitStore.setState({
+        currentFilePath: path,
+        dirty: !unchanged,
+        statusMessage: unchanged ? `Saved ${path}` : `Saved ${path}; newer changes still need saving.`
+      })
+      // Save-before-close/new/open must stop if unsaved edits arrived in flight.
+      return unchanged
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      useCircuitStore.setState({ statusMessage: 'Save failed. Your changes are still open.' })
+      window.alert(`Could not save circuit:\n${message}`)
+      return false
+    }
+  })().finally(() => { saveInFlight = null })
+  return saveInFlight
+}
