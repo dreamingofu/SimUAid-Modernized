@@ -105,6 +105,8 @@ export type MenuCommandId =
   | 'sim.reset'
   | 'sim.changeMode'
   | 'sim.options'
+  // Tools
+  | 'tools.boolean'
   // Window
   | 'window.cascade'
   | 'window.tile'
@@ -277,6 +279,12 @@ export const MENU_STRUCTURE: MenuSpec[] = [
       sep,
       { id: 'sim.changeMode', label: 'CHANGE Mode' },
       { id: 'sim.options', label: 'Options…' }
+    ]
+  },
+  {
+    label: 'Tools',
+    items: [
+      { id: 'tools.boolean', label: 'Boolean Expression / Truth Table…' }
     ]
   },
   {

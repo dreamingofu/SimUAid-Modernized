@@ -42,3 +42,44 @@ jobs:
             throw new Error('Production CSP missing or unsafe');
           }
           JS
+
+  # Builds the unsigned NSIS x64 installer (no publishing, no secrets) and checks
+  # it on a disposable runner: silent per-user install into RUNNER_TEMP, the Lab 3
+  # workflow driven in the installed app over a loopback DevTools port, a
+  # same-version reinstall, and uninstall, with user files and userData kept.
+  # Not a cross-version upgrade, campus image, SmartScreen or code-signing test.
+  windows-installer:
+    name: Windows installer smoke (NSIS x64, per-user)
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - name: Build unsigned Windows installer
+        run: npm run build:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Install, run Lab 3, reinstall and uninstall
+        timeout-minutes: 20
+        run: node scripts/ci/windows-installer-smoke.mjs --evidence installer-smoke-evidence
+      - name: Upload smoke-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-smoke-evidence
+          path: installer-smoke-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload unsigned installer for review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-unsigned
+          path: dist/*-windows-x64-setup.exe
+          if-no-files-found: warn
+          retention-days: 14

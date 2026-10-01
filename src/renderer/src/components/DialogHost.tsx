@@ -10,6 +10,7 @@ import VhdlDialog from './VhdlDialog'
 import BusTapDialog from './BusTapDialog'
 import GraphicsModeDialog from './GraphicsModeDialog'
 import PrintPreviewDialog from './PrintPreviewDialog'
+import BooleanDialog from './BooleanDialog'
 
 /** Mounts whichever React modal the store currently requests. */
 export default function DialogHost(): React.JSX.Element | null {
@@ -38,6 +39,8 @@ export default function DialogHost(): React.JSX.Element | null {
       return <GraphicsModeDialog />
     case 'printPreview':
       return <PrintPreviewDialog />
+    case 'boolean':
+      return <BooleanDialog />
     default:
       return null
   }

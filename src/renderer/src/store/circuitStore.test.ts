@@ -201,3 +201,90 @@ describe('opening circuits without destroying the current session', () => {
     expect(state().statusMessage).toMatch(/limit|large|100,000/i)
   })
 })
+
+describe('creating a generated circuit', () => {
+  function generated(name = 'generated'): ReturnType<typeof createEmptyNetlist> {
+    const netlist = createEmptyNetlist(name)
+    netlist.components.push(component('gen'))
+    return netlist
+  }
+
+  it('replaces a clean document and leaves the new circuit unsaved', async () => {
+    expect(await state().openGeneratedCircuit(generated(), 'Created')).toBe(true)
+    expect(api.confirm).not.toHaveBeenCalled()
+    expect(state().netlist.components.map((c) => c.id)).toEqual(['gen'])
+    expect(state()).toMatchObject({ dirty: true, currentFilePath: null, statusMessage: 'Created', timingScaleNs: 100 })
+  })
+
+  it('keeps a dirty document when the user cancels the save prompt', async () => {
+    state().addComponent(component())
+    const document = state().netlist
+    api.confirm.mockResolvedValue(2)
+    expect(await state().openGeneratedCircuit(generated(), 'Created')).toBe(false)
+    expect(state().netlist).toBe(document)
+    expect(state().dirty).toBe(true)
+  })
+
+  it("discards a dirty document on Don't Save", async () => {
+    state().addComponent(component())
+    api.confirm.mockResolvedValue(1)
+    expect(await state().openGeneratedCircuit(generated(), 'Created')).toBe(true)
+    expect(state().netlist.components.map((c) => c.id)).toEqual(['gen'])
+  })
+
+  it('saves first on Save, and keeps the document if that save fails', async () => {
+    state().loadNetlist(createEmptyNetlist(), '/work/circuit.ckt')
+    state().addComponent(component())
+    const document = state().netlist
+    api.confirm.mockResolvedValue(0)
+    api.saveCkt.mockRejectedValueOnce(new Error('Disk is full'))
+    expect(await state().openGeneratedCircuit(generated(), 'Created')).toBe(false)
+    expect(state().netlist).toBe(document)
+    api.saveCkt.mockResolvedValue(undefined)
+    expect(await state().openGeneratedCircuit(generated(), 'Created')).toBe(true)
+    expect(JSON.parse(api.saveCkt.mock.calls[1][1]).netlist.components[0].id).toBe('switch')
+    expect(state().netlist.components.map((c) => c.id)).toEqual(['gen'])
+  })
+
+  it('does not clobber edits made while the save prompt was open', async () => {
+    state().addComponent(component())
+    const prompt = deferred<number>()
+    api.confirm.mockReturnValue(prompt.promise)
+    const creating = state().openGeneratedCircuit(generated(), 'Created')
+    state().updateComponent('switch', { label: 'edited during prompt' })
+    const edited = state().netlist
+    prompt.resolve(1)
+    expect(await creating).toBe(false)
+    expect(state().netlist).toBe(edited)
+    expect(state().statusMessage).toContain('changed while the prompt was open')
+  })
+
+  it('does not replace a document opened while the save prompt was open', async () => {
+    state().addComponent(component())
+    const prompt = deferred<number>()
+    api.confirm.mockReturnValue(prompt.promise)
+    const creating = state().openGeneratedCircuit(generated(), 'Created')
+    state().loadNetlist(createEmptyNetlist('Other'), '/work/other.ckt')
+    const other = state().netlist
+    prompt.resolve(1)
+    expect(await creating).toBe(false)
+    expect(state().netlist).toBe(other)
+  })
+})
+
+describe('timing scale', () => {
+  it('accepts fit and coarse lab scales, bounded to sane values', () => {
+    state().setTimingScale(100)
+    expect(state().timingScaleNs).toBe(100)
+    state().setTimingScale(500)
+    expect(state().timingScaleNs).toBe(500)
+    state().setTimingScale('fit')
+    expect(state().timingScaleNs).toBe('fit')
+    state().setTimingScale(1e9)
+    expect(state().timingScaleNs).toBe(1000)
+    state().setTimingScale(0)
+    expect(state().timingScaleNs).toBe(1)
+    state().setTimingScale(NaN)
+    expect(state().timingScaleNs).toBe('fit')
+  })
+})

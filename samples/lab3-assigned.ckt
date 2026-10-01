@@ -1,0 +1,758 @@
+{
+  "format": "simuaid-ckt",
+  "version": 1,
+  "netlist": {
+    "components": [
+      {
+        "id": "in-A",
+        "type": "INPUT_SIGNAL",
+        "x": 40,
+        "y": 40,
+        "rotation": 0,
+        "label": "A",
+        "pinLabels": {
+          "out": "A"
+        },
+        "delay": 1,
+        "signal": [
+          {
+            "timeNs": 0,
+            "value": "0"
+          },
+          {
+            "timeNs": 800,
+            "value": "1"
+          }
+        ]
+      },
+      {
+        "id": "in-B",
+        "type": "INPUT_SIGNAL",
+        "x": 40,
+        "y": 100,
+        "rotation": 0,
+        "label": "B",
+        "pinLabels": {
+          "out": "B"
+        },
+        "delay": 1,
+        "signal": [
+          {
+            "timeNs": 0,
+            "value": "0"
+          },
+          {
+            "timeNs": 400,
+            "value": "1"
+          },
+          {
+            "timeNs": 800,
+            "value": "0"
+          },
+          {
+            "timeNs": 1200,
+            "value": "1"
+          }
+        ]
+      },
+      {
+        "id": "in-C",
+        "type": "INPUT_SIGNAL",
+        "x": 40,
+        "y": 160,
+        "rotation": 0,
+        "label": "C",
+        "pinLabels": {
+          "out": "C"
+        },
+        "delay": 1,
+        "signal": [
+          {
+            "timeNs": 0,
+            "value": "0"
+          },
+          {
+            "timeNs": 200,
+            "value": "1"
+          },
+          {
+            "timeNs": 400,
+            "value": "0"
+          },
+          {
+            "timeNs": 600,
+            "value": "1"
+          },
+          {
+            "timeNs": 800,
+            "value": "0"
+          },
+          {
+            "timeNs": 1000,
+            "value": "1"
+          },
+          {
+            "timeNs": 1200,
+            "value": "0"
+          },
+          {
+            "timeNs": 1400,
+            "value": "1"
+          }
+        ]
+      },
+      {
+        "id": "not-C",
+        "type": "NOT",
+        "x": 180,
+        "y": 160,
+        "rotation": 0,
+        "label": "C'",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "in-D",
+        "type": "INPUT_SIGNAL",
+        "x": 40,
+        "y": 220,
+        "rotation": 0,
+        "label": "D",
+        "pinLabels": {
+          "out": "D"
+        },
+        "delay": 1,
+        "signal": [
+          {
+            "timeNs": 0,
+            "value": "0"
+          },
+          {
+            "timeNs": 100,
+            "value": "1"
+          },
+          {
+            "timeNs": 200,
+            "value": "0"
+          },
+          {
+            "timeNs": 300,
+            "value": "1"
+          },
+          {
+            "timeNs": 400,
+            "value": "0"
+          },
+          {
+            "timeNs": 500,
+            "value": "1"
+          },
+          {
+            "timeNs": 600,
+            "value": "0"
+          },
+          {
+            "timeNs": 700,
+            "value": "1"
+          },
+          {
+            "timeNs": 800,
+            "value": "0"
+          },
+          {
+            "timeNs": 900,
+            "value": "1"
+          },
+          {
+            "timeNs": 1000,
+            "value": "0"
+          },
+          {
+            "timeNs": 1100,
+            "value": "1"
+          },
+          {
+            "timeNs": 1200,
+            "value": "0"
+          },
+          {
+            "timeNs": 1300,
+            "value": "1"
+          },
+          {
+            "timeNs": 1400,
+            "value": "0"
+          },
+          {
+            "timeNs": 1500,
+            "value": "1"
+          }
+        ]
+      },
+      {
+        "id": "and-1",
+        "type": "AND2",
+        "x": 420,
+        "y": 200,
+        "rotation": 0,
+        "label": "AD",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "and-2",
+        "type": "AND2",
+        "x": 420,
+        "y": 280,
+        "rotation": 0,
+        "label": "BD",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "and-3",
+        "type": "AND2",
+        "x": 420,
+        "y": 360,
+        "rotation": 0,
+        "label": "C'D",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "and-4",
+        "type": "AND3",
+        "x": 420,
+        "y": 440,
+        "rotation": 0,
+        "label": "ABC",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "or-1",
+        "type": "OR4",
+        "x": 560,
+        "y": 310,
+        "rotation": 0,
+        "label": "OR",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "probe-A",
+        "type": "PROBE",
+        "x": 420,
+        "y": 560,
+        "rotation": 0,
+        "label": "A",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "probe-B",
+        "type": "PROBE",
+        "x": 420,
+        "y": 620,
+        "rotation": 0,
+        "label": "B",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "probe-C",
+        "type": "PROBE",
+        "x": 420,
+        "y": 680,
+        "rotation": 0,
+        "label": "C",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "probe-D",
+        "type": "PROBE",
+        "x": 420,
+        "y": 740,
+        "rotation": 0,
+        "label": "D",
+        "pinLabels": {},
+        "delay": 1
+      },
+      {
+        "id": "probe-F",
+        "type": "PROBE",
+        "x": 660,
+        "y": 340,
+        "rotation": 0,
+        "label": "F",
+        "pinLabels": {},
+        "delay": 1
+      }
+    ],
+    "wires": [
+      {
+        "id": "w-row-A",
+        "segments": [
+          {
+            "x1": 80,
+            "y1": 60,
+            "x2": 340,
+            "y2": 60
+          }
+        ],
+        "fromPinId": "in-A#out",
+        "toPinId": null,
+        "netId": ""
+      },
+      {
+        "id": "w-row-B",
+        "segments": [
+          {
+            "x1": 80,
+            "y1": 120,
+            "x2": 300,
+            "y2": 120
+          }
+        ],
+        "fromPinId": "in-B#out",
+        "toPinId": null,
+        "netId": ""
+      },
+      {
+        "id": "w-row-C",
+        "segments": [
+          {
+            "x1": 80,
+            "y1": 180,
+            "x2": 160,
+            "y2": 180
+          },
+          {
+            "x1": 160,
+            "y1": 180,
+            "x2": 180,
+            "y2": 180
+          }
+        ],
+        "fromPinId": "in-C#out",
+        "toPinId": "not-C#in1",
+        "netId": ""
+      },
+      {
+        "id": "w-row-D",
+        "segments": [
+          {
+            "x1": 80,
+            "y1": 240,
+            "x2": 120,
+            "y2": 240
+          }
+        ],
+        "fromPinId": "in-D#out",
+        "toPinId": null,
+        "netId": ""
+      },
+      {
+        "id": "w-and-1-1",
+        "segments": [
+          {
+            "x1": 340,
+            "y1": 220,
+            "x2": 420,
+            "y2": 220
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "and-1#in1",
+        "netId": ""
+      },
+      {
+        "id": "w-and-1-2",
+        "segments": [
+          {
+            "x1": 120,
+            "y1": 240,
+            "x2": 420,
+            "y2": 240
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "and-1#in2",
+        "netId": ""
+      },
+      {
+        "id": "w-and-2-1",
+        "segments": [
+          {
+            "x1": 300,
+            "y1": 300,
+            "x2": 420,
+            "y2": 300
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "and-2#in1",
+        "netId": ""
+      },
+      {
+        "id": "w-and-2-2",
+        "segments": [
+          {
+            "x1": 120,
+            "y1": 320,
+            "x2": 420,
+            "y2": 320
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "and-2#in2",
+        "netId": ""
+      },
+      {
+        "id": "w-and-3-1",
+        "segments": [
+          {
+            "x1": 260,
+            "y1": 380,
+            "x2": 420,
+            "y2": 380
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "and-3#in1",
+        "netId": ""
+      },
+      {
+        "id": "w-and-3-2",
+        "segments": [
+          {
+            "x1": 120,
+            "y1": 400,
+            "x2": 420,
+            "y2": 400
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "and-3#in2",
+        "netId": ""
+      },
+      {
+        "id": "w-and-4-1",
+        "segments": [
+          {
+            "x1": 340,
+            "y1": 460,
+            "x2": 420,
+            "y2": 460
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "and-4#in1",
+        "netId": ""
+      },
+      {
+        "id": "w-and-4-2",
+        "segments": [
+          {
+            "x1": 300,
+            "y1": 480,
+            "x2": 420,
+            "y2": 480
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "and-4#in2",
+        "netId": ""
+      },
+      {
+        "id": "w-and-4-3",
+        "segments": [
+          {
+            "x1": 160,
+            "y1": 500,
+            "x2": 420,
+            "y2": 500
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "and-4#in3",
+        "netId": ""
+      },
+      {
+        "id": "w-rail-C'",
+        "segments": [
+          {
+            "x1": 240,
+            "y1": 180,
+            "x2": 260,
+            "y2": 180
+          },
+          {
+            "x1": 260,
+            "y1": 180,
+            "x2": 260,
+            "y2": 380
+          }
+        ],
+        "fromPinId": "not-C#out",
+        "toPinId": null,
+        "netId": ""
+      },
+      {
+        "id": "w-rail-A",
+        "segments": [
+          {
+            "x1": 340,
+            "y1": 60,
+            "x2": 340,
+            "y2": 220
+          },
+          {
+            "x1": 340,
+            "y1": 220,
+            "x2": 340,
+            "y2": 460
+          },
+          {
+            "x1": 340,
+            "y1": 460,
+            "x2": 340,
+            "y2": 580
+          },
+          {
+            "x1": 340,
+            "y1": 580,
+            "x2": 420,
+            "y2": 580
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "probe-A#in",
+        "netId": ""
+      },
+      {
+        "id": "w-rail-B",
+        "segments": [
+          {
+            "x1": 300,
+            "y1": 120,
+            "x2": 300,
+            "y2": 300
+          },
+          {
+            "x1": 300,
+            "y1": 300,
+            "x2": 300,
+            "y2": 480
+          },
+          {
+            "x1": 300,
+            "y1": 480,
+            "x2": 300,
+            "y2": 640
+          },
+          {
+            "x1": 300,
+            "y1": 640,
+            "x2": 420,
+            "y2": 640
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "probe-B#in",
+        "netId": ""
+      },
+      {
+        "id": "w-rail-C",
+        "segments": [
+          {
+            "x1": 160,
+            "y1": 180,
+            "x2": 160,
+            "y2": 500
+          },
+          {
+            "x1": 160,
+            "y1": 500,
+            "x2": 160,
+            "y2": 700
+          },
+          {
+            "x1": 160,
+            "y1": 700,
+            "x2": 420,
+            "y2": 700
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "probe-C#in",
+        "netId": ""
+      },
+      {
+        "id": "w-rail-D",
+        "segments": [
+          {
+            "x1": 120,
+            "y1": 240,
+            "x2": 120,
+            "y2": 320
+          },
+          {
+            "x1": 120,
+            "y1": 320,
+            "x2": 120,
+            "y2": 400
+          },
+          {
+            "x1": 120,
+            "y1": 400,
+            "x2": 120,
+            "y2": 760
+          },
+          {
+            "x1": 120,
+            "y1": 760,
+            "x2": 420,
+            "y2": 760
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "probe-D#in",
+        "netId": ""
+      },
+      {
+        "id": "w-or-1-1",
+        "segments": [
+          {
+            "x1": 480,
+            "y1": 230,
+            "x2": 520,
+            "y2": 230
+          },
+          {
+            "x1": 520,
+            "y1": 230,
+            "x2": 520,
+            "y2": 330
+          },
+          {
+            "x1": 520,
+            "y1": 330,
+            "x2": 560,
+            "y2": 330
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "or-1#in1",
+        "netId": ""
+      },
+      {
+        "id": "w-or-1-2",
+        "segments": [
+          {
+            "x1": 480,
+            "y1": 310,
+            "x2": 500,
+            "y2": 310
+          },
+          {
+            "x1": 500,
+            "y1": 310,
+            "x2": 500,
+            "y2": 350
+          },
+          {
+            "x1": 500,
+            "y1": 350,
+            "x2": 560,
+            "y2": 350
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "or-1#in2",
+        "netId": ""
+      },
+      {
+        "id": "w-or-1-3",
+        "segments": [
+          {
+            "x1": 480,
+            "y1": 390,
+            "x2": 500,
+            "y2": 390
+          },
+          {
+            "x1": 500,
+            "y1": 390,
+            "x2": 500,
+            "y2": 370
+          },
+          {
+            "x1": 500,
+            "y1": 370,
+            "x2": 560,
+            "y2": 370
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "or-1#in3",
+        "netId": ""
+      },
+      {
+        "id": "w-or-1-4",
+        "segments": [
+          {
+            "x1": 480,
+            "y1": 480,
+            "x2": 520,
+            "y2": 480
+          },
+          {
+            "x1": 520,
+            "y1": 480,
+            "x2": 520,
+            "y2": 390
+          },
+          {
+            "x1": 520,
+            "y1": 390,
+            "x2": 560,
+            "y2": 390
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "or-1#in4",
+        "netId": ""
+      },
+      {
+        "id": "w-out-F",
+        "segments": [
+          {
+            "x1": 620,
+            "y1": 360,
+            "x2": 660,
+            "y2": 360
+          }
+        ],
+        "fromPinId": null,
+        "toPinId": "probe-F#in",
+        "netId": ""
+      }
+    ],
+    "metadata": {
+      "name": "lab3-assigned",
+      "createdAt": "2026-09-30T00:00:00.000Z",
+      "modifiedAt": "2026-09-30T00:00:00.000Z",
+      "appVersion": "0.1.3-rc.1",
+      "comment": "F = BCD + ABCD' + C'D + AB'D; minimum SOP F = AD + BD + C'D + ABC. Inputs A, B, C, D (first is MSB) count from 0 every 100 ns.",
+      "defaultDelay": 1,
+      "simulation": {
+        "simTimeNs": 1600,
+        "clockPeriodNs": 20,
+        "clockInitialValue": "1"
+      },
+      "scalingFactor": 1
+    }
+  }
+}

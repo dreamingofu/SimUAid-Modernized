@@ -93,7 +93,7 @@ async function showHelp(id: 'help.index' | 'help.usingHelp' | 'help.context'): P
     ? `Current tool: ${tool.kind}\n\n${toolHelp[tool.kind]}`
     : id === 'help.usingHelp'
       ? 'Help Index contains a quick start. Context Sensitive Help explains the active canvas tool. Hover over toolbar buttons to see their names. The status bar reports errors and simulation status.\n\nThis help is available offline. Save circuits as .ckt files and keep backup copies before major edits.'
-      : '1. Choose a component from Parts, then click the canvas to place it.\n2. Choose Edit → Wire; click a source pin, then a destination pin.\n3. Choose Edit → Select and click switches to change their values. Enable View → Show I/O Values to inspect signals.\n4. For timed circuits, add a Clock or Input Signal. Set simulation time in Simulate → Options, then use Go or Step.\n5. Open Window → Timing Diagram to inspect waveforms.\n6. Use File → Save to keep your circuit as a .ckt file.\n\nScroll to zoom. Hold Space and drag to pan. Use Edit → Move to move parts. Right-click a State Machine to edit its state table.'
+      : '1. Choose a component from Parts, then click the canvas to place it.\n2. Choose Edit → Wire; click a source pin, then a destination pin.\n3. Choose Edit → Select and click switches to change their values. Enable View → Show I/O Values to inspect signals.\n4. For timed circuits, add a Clock or Input Signal. Set simulation time in Simulate → Options, then use Go or Step.\n5. Open Window → Timing Diagram to inspect waveforms.\n6. Use File → Save to keep your circuit as a .ckt file.\n7. Tools → Boolean Expression analyzes an expression of up to four inputs (minterms, truth table, minimum SOP) and can create its gate circuit with input stimuli.\n\nScroll to zoom. Hold Space and drag to pan. Use Edit → Move to move parts. Right-click a State Machine to edit its state table.'
   await window.api.confirm({
     type: 'info',
     message: id === 'help.context' ? 'Current Tool Help' : id === 'help.usingHelp' ? 'Using Help' : 'SimUaid Quick Start',
@@ -302,6 +302,11 @@ export async function dispatchCommand(id: MenuCommandId): Promise<void> {
         return
       }
       store.openDialog({ kind: 'placeSM' })
+      return
+
+    // Tools
+    case 'tools.boolean':
+      store.openDialog({ kind: 'boolean' })
       return
 
     // Window
