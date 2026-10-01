@@ -13,31 +13,30 @@ are in [LAB3_ACCEPTANCE.md](LAB3_ACCEPTANCE.md). The reference circuit is
 
 ## 1. Identify the exact build
 
-The version number alone is not enough. This candidate reports **0.1.3-rc.1**,
-and an earlier release used the same number. Identify the build by commit and
-installer hash. Record both before class:
+This candidate is **0.1.3-rc.2**. Also identify the build by commit and
+installer hash, and record both before class:
 
 | Item | Record here |
 |---|---|
 | Source commit (Git SHA) | `________________________` |
-| Installer file name | `SimUaid-0.1.3-rc.1-windows-x64-setup.exe` (Windows) or the DMG name (macOS) |
+| Installer file name | `SimUaid-0.1.3-rc.2-windows-x64-setup.exe` (Windows) or `SimUaid-0.1.3-rc.2-mac-universal.dmg` (macOS) |
 | Installer SHA-256 | `________________________` |
-| Where it came from | CI run URL or release page: `________________________` |
+| Where it came from | Release page for tag `v0.1.3-rc.2`: `________________________` |
 | Lab machine OS and version | `________________________` |
 
 Get the SHA-256 on the machine you install from:
 
-- Windows (PowerShell): `Get-FileHash .\SimUaid-0.1.3-rc.1-windows-x64-setup.exe -Algorithm SHA256`
+- Windows (PowerShell): `Get-FileHash .\SimUaid-0.1.3-rc.2-windows-x64-setup.exe -Algorithm SHA256`
 - macOS (Terminal): `shasum -a 256 <file>.dmg`
 
-If the hash does not match the hash published with the build, do not install it.
+If the hash does not match the release's `SHA256SUMS.txt`, do not install it.
 
 ## 2. Platform status and limits
 
 | Platform | Status for this build |
 |---|---|
 | macOS | The maintainers ran the built app natively: open the sample, Go to 1600 ns, Save As, New, reopen, Go again. The same 15 parts and 23 wires came back. |
-| Windows x64 | **Checked in CI on a GitHub-hosted Windows runner**, not on a campus machine. The check covers: silent per-user install, the Lab 3 workflow driven in the installed app (16-row truth table, Create circuit, Go to 1600 ns, timing waveforms read at each midpoint), checks that the timing panel never squeezes out the circuit at 1008 px and 1366 px widths, same-version reinstall, then uninstall. A copied student circuit and the app's settings must survive. The first run ([36804334226](https://github.com/dreamingofu/SimUAid-Modernized/actions/runs/36804334226)) is **superseded**: review of its screenshot found the timing panel squeezing out the circuit at 1008 px, which is now fixed. For the build you deploy, use the latest passing checks and installer artifact on [PR #13](https://github.com/dreamingofu/SimUAid-Modernized/pull/13). Record its commit and SHA-256 in section 1. |
+| Windows x64 | **Checked in CI on a GitHub-hosted Windows runner**, not on a campus machine. The check covers: silent per-user install, the Lab 3 workflow driven in the installed app (16-row truth table, Create circuit, Go to 1600 ns, timing waveforms read at each midpoint), checks that the timing panel never squeezes out the circuit at 1008 px and 1366 px widths, same-version reinstall, then uninstall. A copied student circuit and the app's settings must survive. The first run ([36804334226](https://github.com/dreamingofu/SimUAid-Modernized/actions/runs/36804334226)) is **superseded**: review of its screenshot found the timing panel squeezing out the circuit at 1008 px, which is now fixed. For the build you deploy, use the published [v0.1.3-rc.2 release](https://github.com/dreamingofu/SimUAid-Modernized/releases/tag/v0.1.3-rc.2) installer. The Release workflow ran the same Windows smoke test on that exact installer before creating the draft release; its evidence is the run's `Windows-installer-smoke-evidence` artifact. Record the release commit, the installer's SHA-256 from `SHA256SUMS.txt` and the Release run URL in section 1. |
 
 Limits to keep in mind:
 

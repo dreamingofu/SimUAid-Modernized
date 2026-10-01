@@ -2,7 +2,25 @@
 
 ## Current state
 
-Updated for task_9f7a8a28e1d7, the approved follow-ups.
+Updated for task_f8a364ab2199: release prep for **0.1.3-rc.2**, after PR #13 was merged.
+
+- **Branch:** `dreamingofu/release-0.1.3-rc.2`, base `6213a6e9fe6670b8230f6f97024c437bcacc5da1` (the PR #13 merge). The root owns git, the PR, the tag, Actions runs and publication. The writer does not commit, push, tag or publish.
+- **Version:** `package.json` and the root version fields of `package-lock.json` (top level and `packages[""]`) are now `0.1.3-rc.2`. No dependency entries changed.
+- **`RELEASING.md`:** installer filenames and tag examples now say rc.2. It also notes that the Release workflow smoke-tests the Windows installer before it creates the draft release.
+- **`.github/workflows/release.yml`:** two new steps in the `build` job, both Windows-only:
+  1. Right after **Build Windows installer**: `node scripts/ci/windows-installer-smoke.mjs --evidence installer-smoke-evidence`, with a 20-minute timeout.
+  2. Always upload a `Windows-installer-smoke-evidence` artifact. Its name does not match the `SimUaid-*` pattern the `release` job downloads, so it is never attached to the release.
+
+  A failed smoke test fails the build job, so no draft release is created. Signing, notarization, permissions, secrets and the publication policy are unchanged.
+- **`docs/INSTRUCTOR_PILOT_GUIDE.md`:** the candidate is now rc.2, with installer and DMG names, the hash command and `SHA256SUMS.txt` matching. The sentence about two builds sharing a version number is removed. Windows deployment now points to the published `v0.1.3-rc.2` release, its `SHA256SUMS.txt` and the Release run's smoke evidence, instead of the latest PR #13 assets.
+- **Preserved as history:** the Lab 3 evidence, `samples/lab3-assigned.ckt` (its metadata still says appVersion 0.1.3-rc.1), the old acceptance hashes and the run references below.
+- **Writer checks:**
+  - the two version fields agree, and the lockfile diff is the version lines only
+  - `release.yml` parses with js-yaml, and the new steps are in the right order with the right conditions and artifact name
+  - `node --check scripts/ci/windows-installer-smoke.mjs` passes
+- **Still to do (root):** commit, tag, the Release workflow run with its full checks and the Windows smoke test, review of the draft release, and publication.
+
+### Previous current state (task_9f7a8a28e1d7, the approved follow-ups)
 
 - **Branch:** `dreamingofu/lab3-simuaid-logic-sim` on base `9d2aaa6`. The root owns git, staging, the draft PR and GitHub runs. The writer does not commit or push.
 - **Lab 3 code:** accepted and unchanged in this task. The root's final checks on the Lab 3 diff:
