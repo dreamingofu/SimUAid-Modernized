@@ -21,6 +21,13 @@ The published release and the latest source may differ. See
 3. Toggle inputs and inspect outputs; use Simulate for clocked circuits and timing.
 4. Save through File → Save / Save As. Files in `samples/` provide small examples.
 5. Open a saved circuit with File → Open. Keep a backup before editing course material.
+6. Tools → Boolean Expression / Truth Table analyzes an expression of up to four
+   inputs (minterms, truth table, exact minimum SOP) and can create its gate circuit
+   with 100 ns input stimuli. See [docs/LAB3_ACCEPTANCE.md](docs/LAB3_ACCEPTANCE.md).
+
+Teaching staff piloting Lab 3 should start with the
+[instructor pilot guide](docs/INSTRUCTOR_PILOT_GUIDE.md) (build identification,
+preflight, classroom steps, expected results, stop criteria).
 
 VHDL export creates a **structural template**, not a complete device model library.
 External implementations are required for component declarations. Unsupported
@@ -49,6 +56,16 @@ npm audit --audit-level=high
 Electron's binary is installed by `postinstall`. macOS distribution builds require
 a Developer ID Application identity; CI also requires notarization credentials.
 See [RELEASING.md](RELEASING.md) for packaging and publication.
+
+Pull-request CI also builds the unsigned Windows NSIS installer (no publishing).
+On a disposable Windows runner, `scripts/ci/windows-installer-smoke.mjs`:
+
+1. installs it per-user;
+2. drives the Lab 3 workflow in the installed app;
+3. reinstalls the same version, then uninstalls;
+4. uploads the installer and evidence as workflow artifacts.
+
+It is not a cross-version upgrade, code-signing, SmartScreen or campus-image test.
 
 ## Data and updates
 

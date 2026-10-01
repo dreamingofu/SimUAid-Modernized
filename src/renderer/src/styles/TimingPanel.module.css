@@ -1,5 +1,8 @@
 .panel {
-  flex: 0 0 420px;
+  /* Wide enough on a laptop to show a whole 16-row lab run with Fit. */
+  flex: 0 0 clamp(420px, 40vw, 760px);
+  /* Never grow to the waveform's intrinsic width; it scrolls inside .scroll. */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--border);
@@ -50,6 +53,9 @@
 }
 
 .cursorBox {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
   padding: 4px 10px;
   border-bottom: 1px solid var(--border);
   font-size: 12px;
@@ -87,10 +93,15 @@
 
 .scroll {
   flex: 1 1 auto;
+  min-width: 0;
   overflow: auto;
 }
 
 .empty {
   padding: 16px;
+  color: var(--muted);
+}
+
+.axisInfo {
   color: var(--muted);
 }

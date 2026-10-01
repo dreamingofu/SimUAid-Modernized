@@ -5,10 +5,12 @@ interface ModalProps {
   title: string
   onClose: () => void
   children: ReactNode
+  /** Wider, height-bounded box with a scrolling body (reports and tables). */
+  wide?: boolean
 }
 
 /** Minimal modal: dimmed overlay + centered box. Esc and overlay-click close it. */
-export default function Modal({ title, onClose, children }: ModalProps): React.JSX.Element {
+export default function Modal({ title, onClose, children, wide = false }: ModalProps): React.JSX.Element {
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if (e.key === 'Escape') onClose()
@@ -19,7 +21,7 @@ export default function Modal({ title, onClose, children }: ModalProps): React.J
 
   return (
     <div className={styles.overlay} onMouseDown={onClose}>
-      <div className={styles.box} onMouseDown={(e) => e.stopPropagation()}>
+      <div className={wide ? `${styles.box} ${styles.wide}` : styles.box} onMouseDown={(e) => e.stopPropagation()}>
         <div className={styles.title}>{title}</div>
         <div className={styles.body}>{children}</div>
       </div>

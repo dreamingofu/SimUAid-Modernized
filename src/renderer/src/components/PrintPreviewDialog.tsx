@@ -21,7 +21,24 @@ export default function PrintPreviewDialog(): React.JSX.Element | null {
   return (
     <Modal title={`Print Preview — ${job.title}`} onClose={closeDialog}>
       <div className={styles.printPreview}>
-        <img src={job.imageUrl} alt="print preview" />
+        {job.imageUrl && <img src={job.imageUrl} alt="print preview" />}
+        {job.notes && job.notes.length > 0 && (
+          <div className={styles.printNotes}>
+            {job.notes.map((line, i) => <p key={i}>{line}</p>)}
+          </div>
+        )}
+        {job.table && (
+          <table className={styles.reportTable}>
+            <thead>
+              <tr>{job.table.columns.map((c, i) => <th key={i}>{c}</th>)}</tr>
+            </thead>
+            <tbody>
+              {job.table.rows.map((row, i) => (
+                <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>
+              ))}
+            </tbody>
+          </table>
+        )}
         {job.smRows && job.smRows.length > 0 && (
           <p className={styles.note}>+ state table ({job.smRows.length} row(s)) printed below the circuit</p>
         )}

@@ -100,7 +100,20 @@ export type DialogState =
   | { kind: 'busTap'; wireId: string; x: number; y: number }
   | { kind: 'graphicsMode' }
   | { kind: 'printPreview' }
+  | { kind: 'boolean' }
   | null
+
+/** A print job: a picture (circuit or timing diagram) and/or a text report with a table. */
+export interface PrintJob {
+  title: string
+  imageUrl: string | null
+  smRows: SmRow[] | null
+  notes?: string[]
+  table?: { columns: string[]; rows: string[][] }
+}
+
+/** Timing-diagram scale: nanoseconds per division, or fit the whole run to the panel. */
+export type TimingScale = number | 'fit'
 
 const EMPTY_SELECTION: Selection = {
   componentIds: [],
@@ -139,8 +152,8 @@ interface CircuitState {
   smEditorOpen: boolean
   /** 'dpi' renders DPI-crisp; 'fixed' renders at 1:1 CSS pixels (legacy look). */
   graphicsMode: 'dpi' | 'fixed'
-  printJob: { title: string; imageUrl: string; smRows: SmRow[] | null } | null
-  timingScaleNs: number
+  printJob: PrintJob | null
+  timingScaleNs: TimingScale
   timingCursorNs: number | null
   statusMessage: string
   redrawNonce: number
@@ -149,6 +162,8 @@ interface CircuitState {
   newCircuit: () => void
   requestNew: () => Promise<void>
   loadNetlist: (netlist: Netlist, path: string | null) => void
+  /** Replaces the document with a generated, unsaved circuit after the usual save prompt. */
+  openGeneratedCircuit: (netlist: Netlist, status: string) => Promise<boolean>
 
   // Component / wire editing
   addComponent: (component: Component) => void
@@ -222,7 +237,7 @@ interface CircuitState {
   enterChangeMode: () => void
   setSimulationOptions: (patch: Partial<SimulationOptions>) => void
   setDefaultDelay: (ns: number) => void
-  setTimingScale: (ns: number) => void
+  setTimingScale: (scale: TimingScale) => void
   setTimingCursor: (ns: number | null) => void
 
   // File operations
@@ -372,6 +387,28 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
       viewport: { scale: netlist.metadata.scalingFactor || 1, offsetX: 40, offsetY: 40 },
       statusMessage: path ? `Opened ${path}` : 'Loaded circuit'
     })
+  },
+
+  openGeneratedCircuit: async (netlist, status) => {
+    const before = get()
+    const generation = documentGeneration
+    if (!(await confirmDiscardIfDirty(get))) {
+      set({ statusMessage: 'Create circuit cancelled; the current circuit was kept.' })
+      return false
+    }
+    // The save prompt is asynchronous: never replace a document that changed
+    // (or was replaced) while it was open.
+    const now = get()
+    if (generation !== documentGeneration || now.netlist !== before.netlist ||
+        now.switchValues !== before.switchValues) {
+      set({ statusMessage: 'Create circuit cancelled: the current circuit changed while the prompt was open.' })
+      return false
+    }
+    get().loadNetlist(netlist, null)
+    get().fitToWindow()
+    // A generated circuit exists only in memory until the user saves it.
+    set({ dirty: true, timingScaleNs: 100, statusMessage: status })
+    return true
   },
 
   addComponent: (component) =>
@@ -945,7 +982,9 @@ export const useCircuitStore = create<CircuitState>((set, get) => ({
       dirty: true
     })),
 
-  setTimingScale: (ns) => set({ timingScaleNs: Math.min(100, Math.max(1, ns)) }),
+  setTimingScale: (scale) => set({
+    timingScaleNs: scale === 'fit' || !Number.isFinite(scale) ? 'fit' : Math.min(1000, Math.max(1, Math.round(scale)))
+  }),
 
   setTimingCursor: (ns) => set({ timingCursorNs: ns }),
 

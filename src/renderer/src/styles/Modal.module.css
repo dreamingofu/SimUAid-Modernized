@@ -162,3 +162,111 @@
 .printPreview img {
   max-width: 100%;
 }
+
+.wide {
+  max-width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+}
+
+.wide .body {
+  overflow: auto;
+}
+
+.printNotes {
+  text-align: left;
+  padding: 8px 12px 0;
+}
+
+.printNotes p {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.reportTable {
+  border-collapse: collapse;
+  margin: 8px auto 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.reportTable th,
+.reportTable td {
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  text-align: center;
+}
+
+.reportTable th {
+  background: var(--hover);
+}
+
+.boolGrid {
+  display: grid;
+  grid-template-columns: 9em 1fr;
+  gap: 8px 12px;
+  align-items: start;
+  margin-bottom: 12px;
+}
+
+.boolGrid > span {
+  color: var(--muted);
+}
+
+.boolGrid input {
+  font: inherit;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+  min-width: 0;
+}
+
+.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.error {
+  color: #b42318;
+  margin: 0 0 12px;
+  white-space: pre-line;
+}
+
+.truthTables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  justify-content: center;
+}
+
+.actionsSplit {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.actionsSplit > div {
+  display: flex;
+  gap: 8px;
+}
+
+.actionsSplit button {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.actionsSplit button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.actionsSplit button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}

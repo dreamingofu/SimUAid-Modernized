@@ -53,6 +53,10 @@ button {
   .printRoot img {
     max-width: 100%;
   }
+  .printNotes p {
+    margin: 0 0 4px;
+    font: 13px 'Segoe UI', sans-serif;
+  }
   .printTable {
     margin-top: 16px;
     border-collapse: collapse;
