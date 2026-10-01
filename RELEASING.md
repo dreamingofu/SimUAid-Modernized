@@ -4,8 +4,8 @@ Installers are written to `dist/`:
 
 | Platform | File |
 | --- | --- |
-| Windows x64 | `SimUaid-0.1.3-rc.1-windows-x64-setup.exe` |
-| macOS Intel and Apple Silicon | `SimUaid-0.1.3-rc.1-mac-universal.dmg` |
+| Windows x64 | `SimUaid-0.1.3-rc.2-windows-x64-setup.exe` |
+| macOS Intel and Apple Silicon | `SimUaid-0.1.3-rc.2-mac-universal.dmg` |
 
 The version in each filename comes from `package.json`.
 
@@ -35,16 +35,20 @@ branches do not create releases.
 ## Create a release
 
 1. Commit and push the source and release configuration you want to distribute.
-2. Create and push a tag matching `package.json` (currently `v0.1.3-rc.1`):
+2. Create and push a tag matching `package.json` (currently `v0.1.3-rc.2`):
 
    ```sh
-   git tag v0.1.3-rc.1
-   git push origin v0.1.3-rc.1
+   git tag v0.1.3-rc.2
+   git push origin v0.1.3-rc.2
    ```
 
 3. Wait for **Actions → Release** to finish. It tests and builds both platforms,
    signs and notarizes the macOS installer, verifies its ticket and Gatekeeper
-   assessment, then creates a draft release with both installers and `SHA256SUMS.txt`.
+   assessment, and runs the Windows installer smoke test on the exact Windows
+   installer it built. That test installs silently per-user, runs the Lab 3
+   workflow, reinstalls and uninstalls. Its evidence is uploaded as the
+   `Windows-installer-smoke-evidence` artifact. Only after both builds pass does the
+   workflow create a draft release with both installers and `SHA256SUMS.txt`.
 4. Open **Releases**, review the draft, and click **Publish release** to make
    downloads public.
 
@@ -118,8 +122,8 @@ xcrun notarytool info <submission-id> --apple-id ... --password ... --team-id ..
 If it shows `Accepted`, just re-run the workflow (or re-run only the failed
 job) — the timeout is not fatal, it costs a wasted signing pass.
 
-Version 0.1.1 was released unsigned and remains unchanged. Version 0.1.2 is prepared for
-the signed release; publish its tag only after the signing workflow passes.
+Version 0.1.1 was released unsigned and remains unchanged. Releases from 0.1.2 onward
+use the signed and notarized macOS workflow above.
 Existing downloads do not become signed automatically. A normal downloaded-app confirmation may still appear
 for a notarized app.
 
