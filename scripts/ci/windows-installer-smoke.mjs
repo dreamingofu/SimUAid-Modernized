@@ -305,14 +305,64 @@ function pageState() {
   }
 }
 
+/** Resolves after two animation frames, i.e. once pending layout and paint have run. */
+function pageNextFrames() {
+  return new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))
+}
+
+/** Geometry of the circuit canvas and the timing panel. */
+function pageLayout() {
+  const title = [...document.querySelectorAll('span')].find((s) => s.textContent === 'Timing Diagram')
+  const panel = title.parentElement.parentElement
+  const plot = panel.querySelector('canvas')
+  const scroll = plot.parentElement
+  // The circuit canvas is sized from its container by a ResizeObserver, so
+  // measure both: they agree once the editor has caught up with a resize.
+  const circuit = [...document.querySelectorAll('canvas')].find((c) => !panel.contains(c))
+  return {
+    viewport: window.innerWidth,
+    panel: panel.getBoundingClientRect().width,
+    circuit: circuit.parentElement.getBoundingClientRect().width,
+    circuitCanvas: circuit.getBoundingClientRect().width,
+    scrollClient: scroll.clientWidth,
+    scrollWidth: scroll.scrollWidth,
+    plotCss: parseFloat(plot.style.width),
+    scale: panel.querySelector('select').value
+  }
+}
+
+/**
+ * Layout rules: the timing panel keeps its CSS width clamp(420px, 40vw, 760px)
+ * regardless of the waveform's width, the circuit gets the rest, a fixed scale
+ * scrolls inside the panel, and Fit run needs no scrolling.
+ */
+export function layoutProblems(l) {
+  const problems = []
+  const maxPanel = Math.min(760, Math.max(420, 0.4 * l.viewport)) + 1
+  if (l.panel > maxPanel) problems.push(`timing panel ${l.panel}px wider than ${maxPanel}px`)
+  if (l.circuit < l.viewport - maxPanel - 2) problems.push(`circuit only ${l.circuit}px of ${l.viewport}px`)
+  if (l.circuit + l.panel > l.viewport + 2) problems.push(`circuit + panel ${l.circuit + l.panel}px overflow ${l.viewport}px`)
+  if (Math.abs(l.circuitCanvas - l.circuit) > 2) problems.push(`circuit canvas ${l.circuitCanvas}px not yet resized to ${l.circuit}px`)
+  if (l.viewport >= 1000 && l.circuit < 0.5 * l.viewport) problems.push(`circuit below half of ${l.viewport}px`)
+  if (l.scale === 'fit' && l.plotCss > l.scrollClient + 1) problems.push(`Fit plot ${l.plotCss}px exceeds ${l.scrollClient}px`)
+  if (l.scale !== 'fit' && l.plotCss > l.scrollClient && l.scrollWidth <= l.scrollClient) {
+    problems.push('fixed-scale plot is clipped instead of scrolling')
+  }
+  return problems
+}
+
 /** Reads each waveform's level at every interval midpoint from the timing canvas pixels. */
 function pageReadWaveforms(intervals, intervalNs) {
   const title = [...document.querySelectorAll('span')].find((s) => s.textContent === 'Timing Diagram')
   const panel = title.parentElement.parentElement
   const canvas = panel.querySelector('canvas')
-  const scaleNs = Number(panel.querySelector('select').value)
-  const pxPerNs = 50 / scaleNs
-  const ratio = canvas.width / parseFloat(canvas.style.width)
+  const scale = panel.querySelector('select').value
+  const cssWidth = parseFloat(canvas.style.width)
+  // Fixed scales draw 50 px per division; Fit stretches the run over the plot
+  // width less the 40 px end padding.
+  const pxPerNs = scale === 'fit' ? (cssWidth - 40) / (intervals * intervalNs) : 50 / Number(scale)
+  const scaleNs = scale
+  const ratio = canvas.width / cssWidth
   const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height)
   const dark = (cssX, cssY) => {
     for (let dy = -1.5; dy <= 1.5; dy += 0.5) {
@@ -515,11 +565,46 @@ export async function labWorkflow(s, evidenceDir) {
   const ran = await s.until('simulation to 1600 ns', (st) =>
     st.text.includes('Time: 1600 ns') && st.timing?.hasCanvas && st.timing.text.includes('0–1600 ns'))
   if (ran.timing.scale !== '100') throw new Error(`Timing scale ${ran.timing.scale}, expected 100 ns/div`)
-  // The canvas paints in an effect after the panel renders; wait for a fully
-  // readable diagram, then require the exact truth-table vectors.
+  const waves = await readExactVectors(s, '100 ns/div')
+  const png = await evaluate(s.cdp, pageCanvasPng)
+  writeFileSync(join(evidenceDir, 'session-1b-timing-canvas.png'), Buffer.from(png.split(',')[1], 'base64'))
+
+  // Layout at the runner's real window size and at common laptop widths: the
+  // panel stays bounded and the circuit keeps its share; refit, then capture.
+  const layouts = []
+  const screenshots = [dialogShot, 'session-1b-timing-canvas.png']
+  for (const size of [null, { width: 1366, height: 768 }, { width: 1008, height: 681 }]) {
+    if (size) await s.cdp.send('Emulation.setDeviceMetricsOverride', { ...size, deviceScaleFactor: 0, mobile: false })
+    const name = size ? `${size.width}x${size.height}` : 'window'
+    const layout = await checkLayout(s, name)
+    await evaluate(s.cdp, pageNextFrames) // Fit reads the size the editor stored after resizing
+    await s.menu('View', 'Fit To Window')
+    await s.until('fit to window', (st) => st.text.includes('Fit to window'))
+    await evaluate(s.cdp, pageNextFrames)
+    screenshots.push(await s.screenshot(`session-1b-${name}.png`))
+    layouts.push({ name, ...layout })
+  }
+  await waitFor('Fit run scale', () => evaluate(s.cdp, pageSetSelect, 'fit', 'fit'))
+  const fitLayout = await checkLayout(s, 'fit-run 1008x681')
+  const fitWaves = await readExactVectors(s, 'Fit run')
+  screenshots.push(await s.screenshot('session-1b-1008x681-fit-run.png'))
+  await s.cdp.send('Emulation.clearDeviceMetricsOverride')
+  return {
+    truthVector: vector,
+    createdTitle: created.title,
+    timingText: ran.timing.text,
+    waveforms: waves,
+    fitWaveforms: fitWaves,
+    layouts: [...layouts, { name: 'fit-run 1008x681', ...fitLayout }],
+    screenshots
+  }
+}
+
+/** Waits for the painted diagram, then requires the exact truth-table vectors. */
+async function readExactVectors(s, label) {
   let waves
   try {
-    waves = await waitFor('timing waveforms painted', async () => {
+    waves = await waitFor(`timing waveforms painted (${label})`, async () => {
       const w = await evaluate(s.cdp, pageReadWaveforms, 16, 100)
       return w.labels.length === 5 && Object.values(w.vectors).every((v) => !v.includes('?')) && w
     }, 10_000)
@@ -527,22 +612,24 @@ export async function labWorkflow(s, evidenceDir) {
     waves = await evaluate(s.cdp, pageReadWaveforms, 16, 100)
     throw new Error(`${error.message}; last read ${JSON.stringify(waves.vectors)}`)
   }
-  const expected = expectedVectors()
   if (waves.labels.join('') !== 'ABCDF') throw new Error(`Timing labels ${waves.labels.join(',')}`)
-  for (const [label, v] of Object.entries(expected)) {
-    if (waves.vectors[label] !== v) throw new Error(`Timing ${label} midpoints ${waves.vectors[label]} != ${v}`)
+  for (const [name, v] of Object.entries(expectedVectors())) {
+    if (waves.vectors[name] !== v) throw new Error(`Timing ${name} midpoints at ${label}: ${waves.vectors[name]} != ${v}`)
   }
-  // The timing panel narrows the canvas; refit so the screenshot shows the whole circuit.
-  await s.menu('View', 'Fit To Window')
-  await s.until('fit to window', (st) => st.text.includes('Fit to window'))
-  const png = await evaluate(s.cdp, pageCanvasPng)
-  writeFileSync(join(evidenceDir, 'session-1b-timing-canvas.png'), Buffer.from(png.split(',')[1], 'base64'))
-  return {
-    truthVector: vector,
-    createdTitle: created.title,
-    timingText: ran.timing.text,
-    waveforms: waves,
-    screenshots: [dialogShot, 'session-1b-timing-canvas.png']
+  return waves
+}
+
+/** Waits for the layout rules to hold at the current viewport. */
+async function checkLayout(s, name) {
+  let last
+  try {
+    return await waitFor(`layout at ${name}`, async () => {
+      last = await evaluate(s.cdp, pageLayout)
+      return layoutProblems(last).length === 0 && last
+    }, 10_000)
+  } catch (error) {
+    await s.screenshot(`layout-failure-${name.replace(/\W+/g, '-')}.png`)
+    throw new Error(`${error.message}: ${layoutProblems(last).join('; ')} ${JSON.stringify(last)}`)
   }
 }
 
@@ -713,13 +800,11 @@ async function main() {
       sessions.push(s)
       await s.start()
       const lab = await labWorkflow(s, evidenceDir)
-      const windowShot = await s.screenshot('session-1b-window.png')
       const processes = processesUnder(installDir)
       if (s.consoleErrors.length) throw new Error(`Renderer errors: ${s.consoleErrors.join(' | ')}`)
       const killed = await s.terminate(installDir)
       return {
         ...lab,
-        screenshots: [...lab.screenshots, windowShot],
         processes,
         terminatedUnsavedSession: killed,
         session: s.summary()
